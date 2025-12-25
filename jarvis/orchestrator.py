@@ -9,6 +9,7 @@ from typing import Optional
 
 from pynput import keyboard
 from rich.console import Console
+import threading
 
 from .ears import Ears
 from .voice import Voice
@@ -35,6 +36,7 @@ class JarvisOrchestrator:
         self.is_listening = False
         self._keyboard_listener = None
         self._hotkey = self.config.get('push_to_talk', {}).get('hotkey', '<alt>+<space>')
+        self._loop = None  # Store reference to main event loop
         
     async def initialize(self):
         """Initialize all components."""
@@ -51,6 +53,7 @@ class JarvisOrchestrator:
     async def run(self):
         """Main run loop."""
         self.is_running = True
+        self._loop = asyncio.get_running_loop()  # Store event loop reference
         
         # Initialize components
         await self.initialize()
@@ -130,8 +133,11 @@ class JarvisOrchestrator:
         # Get audio and transcribe
         audio_data = self.ears.stop_recording()
         
-        # Process in background
-        asyncio.create_task(self._process_audio(audio_data))
+        # Schedule coroutine from keyboard thread to main event loop
+        if self._loop and audio_data is not None and len(audio_data) > 0:
+            self._loop.call_soon_threadsafe(
+                lambda: asyncio.create_task(self._process_audio(audio_data))
+            )
     
     async def _process_audio(self, audio_data):
         """Process recorded audio through the full pipeline."""
