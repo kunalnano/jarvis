@@ -13,12 +13,11 @@ Voice In (Whisper) → Orchestrator → Claude (Brain) → MCP Tools → Voice O
 
 ## Tech Stack
 
-- **Voice Input**: Whisper.cpp (local, private, fast)
+- **Voice Input**: Wispr Flow (external app - user's existing dictation tool)
 - **Voice Output**: ElevenLabs API or macOS `say`
-- **Brain**: Claude via Anthropic API (future) or Claude.ai + MCP
-- **Actions**: MCP servers (Desktop Commander, Notion, etc.)
-- **UI**: Electron app with React
-- **Wake Word**: Porcupine or keyboard shortcut
+- **Brain**: Claude via Anthropic API
+- **Actions**: System tools (open apps, run commands, file access)
+- **UI**: Electron app with React (future)
 
 ## Commands
 
@@ -74,10 +73,10 @@ jarvis/
 ## Key Implementation Details
 
 ### Voice Input (ears.py)
-- Use whisper.cpp for local transcription
-- Support push-to-talk (keyboard shortcut) and wake word
-- Stream audio in chunks for responsiveness
-- Return transcribed text to orchestrator
+- Simple text input prompt
+- User types or uses Wispr Flow to dictate
+- No audio handling needed - Wispr Flow does transcription
+- Return text to orchestrator
 
 ### Voice Output (voice.py)
 - Primary: ElevenLabs API for natural speech
@@ -92,10 +91,10 @@ jarvis/
 - Parse Claude's response for tool calls vs. speech
 
 ### Orchestrator (orchestrator.py)
-- Main event loop
-- Coordinate ears → brain → voice → ui
+- Main input loop (text prompt)
+- Coordinate ears → brain → voice
 - Maintain conversation history
-- Handle interruptions and state changes
+- Handle exit commands
 
 ### Tools (tools.py)
 - Wrapper around MCP server calls
@@ -113,11 +112,11 @@ jarvis/
 
 ## MVP Scope (Phase 1)
 
-1. Push-to-talk voice input (Option+Space)
+1. Text input prompt (compatible with Wispr Flow dictation)
 2. Claude processes request
-3. Execute simple commands (open app, search web)
-4. Voice response
-5. Basic HUD showing status
+3. Execute tool commands (open app, search web, etc.)
+4. Voice response via macOS TTS
+5. Conversation history maintained
 
 ## Future Phases
 

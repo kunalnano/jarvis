@@ -4,11 +4,10 @@ A voice-activated AI assistant powered by Claude, inspired by J.A.R.V.I.S. from 
 
 ## Features
 
-- 🎤 **Voice Control** - Push-to-talk or wake word activation
+- 🎤 **Voice Control** - Use Wispr Flow for dictation into text prompt
 - 🧠 **Claude Brain** - Powered by Anthropic's Claude
-- 🔧 **MCP Tools** - Control your computer, Notion, calendar, and more
-- 🖥️ **Ambient HUD** - Floating status display
-- 📢 **Natural Speech** - ElevenLabs or macOS TTS
+- 🔧 **Tools** - Control your computer, open apps, run commands
+- 📢 **Natural Speech** - ElevenLabs or macOS TTS for responses
 
 ## Quick Start
 
@@ -19,12 +18,29 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# Configure
-cp config/jarvis.example.yaml config/jarvis.yaml
-# Edit config/jarvis.yaml with your API keys
+# Set your API key
+export ANTHROPIC_API_KEY=your-key-here
 
 # Run
 python -m jarvis.main
+```
+
+## Usage
+
+1. Run Jarvis
+2. When you see `You:` prompt, either:
+   - Type your command, OR
+   - Activate Wispr Flow and dictate
+3. Jarvis responds with voice + text
+
+### Example Commands
+
+```
+You: What time is it?
+You: Open Safari
+You: Search the web for weather in Austin
+You: List files in my Downloads folder
+You: Check my battery level
 ```
 
 ## Configuration
@@ -32,53 +48,49 @@ python -m jarvis.main
 Edit `config/jarvis.yaml`:
 
 ```yaml
-# Voice settings
-voice:
-  input: whisper          # whisper or system
-  output: elevenlabs      # elevenlabs or macos
-  wake_word: "jarvis"
-  push_to_talk: "option+space"
+voice_output:
+  engine: macos           # macos (free) or elevenlabs (better quality)
+  macos_voice: Daniel     # British voice
+  rate: 180
 
-# API Keys (or set as environment variables)
-api_keys:
-  anthropic: ${ANTHROPIC_API_KEY}
-  elevenlabs: ${ELEVENLABS_API_KEY}
-
-# Claude settings
 claude:
   model: claude-sonnet-4-20250514
   max_tokens: 1024
 ```
 
-## Keyboard Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| `Option+Space` | Push-to-talk |
-| `Option+J` | Toggle HUD |
-| `Option+Escape` | Stop speaking |
-
 ## Architecture
 
 ```
-┌─────────────────────────────────────────┐
-│              Jarvis                      │
-├─────────────────────────────────────────┤
-│  Ears (Whisper) → Brain (Claude)        │
-│         ↓              ↓                │
-│     Voice Out    MCP Tools              │
-│         ↓              ↓                │
-│       TTS        Actions                │
-└─────────────────────────────────────────┘
+┌──────────────────────────────────────────┐
+│              Jarvis                       │
+├──────────────────────────────────────────┤
+│  Text Input ──→ Claude ──→ Voice Out     │
+│  (Wispr Flow)     │          (TTS)       │
+│                   ↓                       │
+│               Tools                       │
+│         (apps, files, web)               │
+└──────────────────────────────────────────┘
 ```
+
+## Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `open_application` | Open any macOS app |
+| `open_url` | Open URL in browser |
+| `run_command` | Execute shell commands |
+| `read_file` | Read file contents |
+| `list_directory` | List folder contents |
+| `get_system_info` | Battery, disk, memory |
+| `search_web` | Open web search |
 
 ## Requirements
 
 - Python 3.10+
-- Node.js 18+ (for UI)
 - macOS (primary target)
 - Anthropic API key
-- ElevenLabs API key (optional)
+- Wispr Flow (for voice dictation)
+- ElevenLabs API key (optional, for better voice)
 
 ## License
 
