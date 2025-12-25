@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Jarvis</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+            background: transparent;
+            -webkit-app-region: drag;
+            user-select: none;
+        }
+        
+        .container {
+            background: linear-gradient(135deg, rgba(20, 30, 50, 0.95), rgba(10, 20, 40, 0.98));
+            border: 1px solid rgba(100, 150, 255, 0.3);
+            border-radius: 16px;
+            padding: 20px;
+            backdrop-filter: blur(20px);
+            box-shadow: 
+                0 8px 32px rgba(0, 0, 0, 0.4),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        }
+        
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        
+        .orb {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 30% 30%, #4a90d9, #1a5490);
+            box-shadow: 
+                0 0 20px rgba(74, 144, 217, 0.5),
+                inset 0 -5px 15px rgba(0, 0, 0, 0.3);
+            animation: pulse 2s ease-in-out infinite;
+        }
+        
+        .orb.listening {
+            background: radial-gradient(circle at 30% 30%, #4ad97a, #1a9050);
+            box-shadow: 
+                0 0 30px rgba(74, 217, 122, 0.7),
+                inset 0 -5px 15px rgba(0, 0, 0, 0.3);
+            animation: pulse-active 0.5s ease-in-out infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.05); opacity: 0.9; }
+        }
+        
+        @keyframes pulse-active {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+        
+        .title {
+            color: #ffffff;
+            font-size: 18px;
+            font-weight: 600;
+            letter-spacing: 2px;
+        }
+        
+        .status {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 12px;
+            margin-bottom: 12px;
+        }
+        
+        .status.listening {
+            color: #4ad97a;
+        }
+        
+        .message {
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 14px;
+            line-height: 1.5;
+            min-height: 42px;
+        }
+        
+        .hint {
+            color: rgba(255, 255, 255, 0.4);
+            font-size: 11px;
+            margin-top: 12px;
+            text-align: center;
+        }
+        
+        kbd {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: inherit;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="orb" id="orb"></div>
+            <div class="title">J.A.R.V.I.S</div>
+        </div>
+        <div class="status" id="status">Ready</div>
+        <div class="message" id="message">At your service, sir.</div>
+        <div class="hint"><kbd>⌥</kbd> + <kbd>Space</kbd> to speak</div>
+    </div>
+    
+    <script>
+        const orb = document.getElementById('orb');
+        const status = document.getElementById('status');
+        const message = document.getElementById('message');
+        
+        // Listen for status updates from Python backend
+        if (window.jarvis) {
+            window.jarvis.onStatusUpdate((newStatus) => {
+                message.textContent = newStatus;
+            });
+            
+            window.jarvis.onListeningChange((isListening) => {
+                if (isListening) {
+                    orb.classList.add('listening');
+                    status.classList.add('listening');
+                    status.textContent = 'Listening...';
+                } else {
+                    orb.classList.remove('listening');
+                    status.classList.remove('listening');
+                    status.textContent = 'Ready';
+                }
+            });
+        }
+        
+        // Demo: Simulate listening state on click (for testing)
+        orb.addEventListener('click', () => {
+            orb.classList.toggle('listening');
+            status.classList.toggle('listening');
+            status.textContent = orb.classList.contains('listening') 
+                ? 'Listening...' 
+                : 'Ready';
+        });
+    </script>
+</body>
+</html>
