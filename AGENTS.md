@@ -15,7 +15,10 @@ Voice In (Whisper) → Orchestrator → Claude (Brain) → MCP Tools → Voice O
 
 - **Voice Input**: Wispr Flow (external app - user's existing dictation tool)
 - **Voice Output**: ElevenLabs API or macOS `say`
-- **Brain**: Claude via Anthropic API
+- **Brain**: Multiple backends supported:
+  - LM Studio (local, OpenAI-compatible, runs on Windows GPU)
+  - Ollama (local, runs on Mac)
+  - Claude (Anthropic API, paid)
 - **Actions**: System tools (open apps, run commands, file access)
 - **UI**: Electron app with React (future)
 
