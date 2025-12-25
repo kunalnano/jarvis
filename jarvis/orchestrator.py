@@ -75,17 +75,11 @@ class JarvisOrchestrator:
     
     def _setup_hotkey(self):
         """Setup push-to-talk hotkey listener."""
-        # Track modifier state
-        self._alt_pressed = False
-        self._recording_task: Optional[asyncio.Task] = None
         
         def on_press(key):
             try:
-                # Check for Alt (Option on Mac)
+                # Option key starts listening
                 if key == keyboard.Key.alt or key == keyboard.Key.alt_l or key == keyboard.Key.alt_r:
-                    self._alt_pressed = True
-                # Check for Space while Alt is held
-                elif key == keyboard.Key.space and self._alt_pressed:
                     if not self.is_listening:
                         self._start_listening()
             except Exception as e:
@@ -93,11 +87,8 @@ class JarvisOrchestrator:
         
         def on_release(key):
             try:
+                # Option key release stops listening
                 if key == keyboard.Key.alt or key == keyboard.Key.alt_l or key == keyboard.Key.alt_r:
-                    self._alt_pressed = False
-                    if self.is_listening:
-                        self._stop_listening()
-                elif key == keyboard.Key.space:
                     if self.is_listening:
                         self._stop_listening()
             except Exception as e:
@@ -108,7 +99,7 @@ class JarvisOrchestrator:
             on_release=on_release
         )
         self._keyboard_listener.start()
-        console.print(f"[dim]Hotkey active: Option+Space to talk[/dim]")
+        console.print(f"[dim]Hotkey active: Option (hold) to talk[/dim]")
     
     def _start_listening(self):
         """Start recording audio."""

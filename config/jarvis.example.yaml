@@ -22,7 +22,7 @@ wake_word:
 # Push to Talk
 push_to_talk:
   enabled: true
-  hotkey: "<alt>+<space>"   # Option+Space on Mac
+  hotkey: "<alt>"              # Just Option key (hold to talk)
   
 # Claude Settings
 claude:
