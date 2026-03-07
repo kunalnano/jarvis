@@ -8,7 +8,6 @@ Supports:
 
 import asyncio
 import os
-os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'  # Suppress pygame welcome message
 import re
 import subprocess
 import sys
@@ -53,35 +52,34 @@ def clean_for_speech(text: str) -> str:
 
 class Voice:
     """Multi-backend TTS - ElevenLabs or macOS native."""
-    
+
     def __init__(self, config: dict):
         self.config = config.get('voice_output', {})
         self.engine = self.config.get('engine', 'elevenlabs')
-        
+
         # ElevenLabs settings
         self.voice_id = self.config.get('voice_id', '')
         self.model = self.config.get('model', 'eleven_turbo_v2_5')
         self.api_key = self.config.get('api_key') or os.environ.get('ELEVENLABS_API_KEY')
-        
+
         # Voice tuning parameters
         self.stability = self.config.get('stability', 0.5)
         self.similarity_boost = self.config.get('similarity_boost', 0.75)
         self.style = self.config.get('style', 0.0)
         self.speed = self.config.get('speed', 1.0)  # Stored but may not be supported
         self.use_speaker_boost = self.config.get('use_speaker_boost', True)
-        
+
         # macOS settings
         self.macos_voice = self.config.get('macos_voice', 'Samantha')
         self.rate = self.config.get('rate', 180)
-        
+
         self.initialized = False
-        self._pygame_initialized = False
         self.client = None
-        
+
         # Usage tracking
         self.characters_used_session = 0
         self.subscription_info = None
-        
+
     async def initialize(self):
         """Initialize TTS engine."""
         # Auto-detect engine if voice_id is set
@@ -89,7 +87,7 @@ class Voice:
             self.engine = 'elevenlabs'
         elif sys.platform == 'darwin' and self.config.get('engine') == 'macos':
             self.engine = 'macos'
-        
+
         if self.engine == 'elevenlabs':
             await self._init_elevenlabs()
         elif self.engine == 'macos':
@@ -103,36 +101,32 @@ class Voice:
             else:
                 console.print("[red]✗[/red] No TTS engine configured")
                 console.print("[dim]Add ElevenLabs API key or use macOS native[/dim]")
-    
+
     async def _init_elevenlabs(self):
         """Initialize ElevenLabs."""
         if not self.api_key:
             console.print("[red]✗[/red] ELEVENLABS_API_KEY not set")
             return
-        
+
         try:
             from elevenlabs.client import ElevenLabs
-            import pygame
-            
+
             self.client = ElevenLabs(api_key=self.api_key)
-            
-            pygame.mixer.init()
-            self._pygame_initialized = True
-            
+
             self.initialized = True
             self.engine = 'elevenlabs'
-            
+
             # Fetch and display subscription info
             await self._fetch_subscription_info()
-            
+
             console.print(f"[green]✓[/green] ElevenLabs ready (voice: {self.voice_id[:8]}..., speed: {self.speed}x)")
-            
+
         except ImportError as e:
             console.print(f"[red]✗[/red] Missing package: {e}")
-            console.print("[dim]Run: pip install elevenlabs pygame[/dim]")
+            console.print("[dim]Run: pip install elevenlabs[/dim]")
         except Exception as e:
             console.print(f"[red]✗[/red] ElevenLabs error: {e}")
-    
+
     async def _fetch_subscription_info(self):
         """Fetch ElevenLabs subscription/usage info."""
         try:
@@ -153,19 +147,19 @@ class Voice:
                     )
                 except:
                     pass
-            
+
             if self.subscription_info:
                 self._print_credits_status()
         except Exception as e:
             console.print(f"[yellow]Could not fetch subscription info: {e}[/yellow]")
-    
+
     def _print_credits_status(self):
         """Display ElevenLabs credits/usage."""
         if not self.subscription_info:
             return
-        
+
         info = self.subscription_info
-        
+
         # Handle different SDK response structures
         if hasattr(info, 'subscription'):
             sub = info.subscription
@@ -176,15 +170,15 @@ class Voice:
             used = getattr(info, 'character_count', 0)
             limit = getattr(info, 'character_limit', 10000)
             tier = getattr(info, 'tier', 'unknown')
-        
+
         remaining = limit - used
         percent_used = (used / limit) * 100 if limit > 0 else 0
-        
+
         # Visual bar
         bar_width = 25
         filled = int((percent_used / 100) * bar_width)
         bar = "█" * filled + "░" * (bar_width - filled)
-        
+
         # Color based on usage
         if percent_used < 50:
             color = "green"
@@ -192,49 +186,48 @@ class Voice:
             color = "yellow"
         else:
             color = "red"
-        
+
         console.print(
             f"[dim]ElevenLabs:[/dim] [{color}]{bar}[/{color}] "
             f"[dim]{used:,}/{limit:,} chars ({percent_used:.1f}%) • {remaining:,} remaining • {tier}[/dim]"
         )
-    
+
     async def _init_macos(self):
         """Initialize macOS native TTS."""
         if sys.platform != 'darwin':
             console.print("[red]✗[/red] macOS TTS only available on Mac")
             return
-        
+
         self.initialized = True
         self.engine = 'macos'
         console.print(f"[green]✓[/green] macOS TTS ready (voice: {self.macos_voice})")
-    
+
     async def speak(self, text: str):
         """Generate and play speech."""
         if not text:
             return
-            
+
         console.print(f"[magenta]Yennefer:[/magenta] {text}")
-        
+
         if not self.initialized:
             console.print("[yellow]Voice not initialized[/yellow]")
             return
-        
+
         speech_text = clean_for_speech(text)
-        
+
         if self.engine == 'elevenlabs':
             await self._speak_elevenlabs(speech_text)
         elif self.engine == 'macos':
             await self._speak_macos(speech_text)
-    
+
     async def _speak_elevenlabs(self, text: str):
         """Speak using ElevenLabs with voice settings."""
         try:
-            import pygame
             from elevenlabs import VoiceSettings
-            
+
             # Track character usage
             self.characters_used_session += len(text)
-            
+
             # Build voice settings
             voice_settings = VoiceSettings(
                 stability=self.stability,
@@ -242,9 +235,9 @@ class Voice:
                 style=self.style,
                 use_speaker_boost=self.use_speaker_boost
             )
-            
+
             loop = asyncio.get_event_loop()
-            
+
             # Core parameters that are always supported
             kwargs = {
                 'text': text,
@@ -252,50 +245,49 @@ class Voice:
                 'model_id': self.model,
                 'voice_settings': voice_settings
             }
-            
+
             audio_generator = await loop.run_in_executor(
                 None,
                 lambda: self.client.text_to_speech.convert(**kwargs)
             )
-            
+
             audio_bytes = b''.join(audio_generator)
-            
+
             with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as f:
                 f.write(audio_bytes)
                 temp_path = f.name
-            
-            pygame.mixer.music.load(temp_path)
-            pygame.mixer.music.play()
-            
-            while pygame.mixer.music.get_busy():
-                await asyncio.sleep(0.1)
-            
-            pygame.mixer.music.unload()
+
+            # Play with afplay (macOS native)
+            await loop.run_in_executor(
+                None,
+                lambda: subprocess.run(["afplay", temp_path], check=True)
+            )
+
             Path(temp_path).unlink(missing_ok=True)
-            
+
         except Exception as e:
             console.print(f"[yellow]TTS error: {e}[/yellow]")
-    
+
     async def _speak_macos(self, text: str):
         """Speak using macOS native TTS."""
         try:
             escaped_text = text.replace('"', '\\"')
             cmd = f'say -v {self.macos_voice} -r {self.rate} "{escaped_text}"'
-            
+
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
                 None,
                 lambda: subprocess.run(cmd, shell=True, check=True)
             )
-            
+
         except Exception as e:
             console.print(f"[yellow]TTS error: {e}[/yellow]")
-    
+
     def status(self):
         """Print detailed voice status."""
         if self.engine == 'elevenlabs':
             info = self.subscription_info
-            
+
             # Extract info based on SDK response structure
             if info:
                 if hasattr(info, 'subscription'):
@@ -307,7 +299,7 @@ class Voice:
                     used = getattr(info, 'character_count', 0)
                     limit = getattr(info, 'character_limit', 10000)
                     tier = getattr(info, 'tier', 'unknown')
-                
+
                 console.print(Panel(
                     f"[cyan]Tier:[/cyan] {tier}\n"
                     f"[cyan]Characters used:[/cyan] {used:,} / {limit:,}\n"
@@ -330,26 +322,16 @@ class Voice:
                 ))
         else:
             console.print(f"[dim]Engine: {self.engine}[/dim]")
-    
+
     async def refresh_credits(self):
         """Refresh ElevenLabs credit info."""
         if self.engine == 'elevenlabs':
             await self._fetch_subscription_info()
-    
+
     def stop(self):
         """Stop current speech."""
-        try:
-            if self._pygame_initialized:
-                import pygame
-                pygame.mixer.music.stop()
-        except:
-            pass
-    
+        pass
+
     def cleanup(self):
         """Clean up resources."""
-        try:
-            if self._pygame_initialized:
-                import pygame
-                pygame.mixer.quit()
-        except:
-            pass
+        pass

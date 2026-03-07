@@ -6,9 +6,6 @@ Usage:
     python -m jarvis.main
 """
 
-import os
-os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'  # Must be before pygame import
-
 import asyncio
 from rich.console import Console
 from rich.panel import Panel
