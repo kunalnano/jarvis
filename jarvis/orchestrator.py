@@ -8,6 +8,7 @@ from rich.console import Console
 from .ears import Ears
 from .voice import Voice
 from .brain import Brain
+from .presence import Presence
 
 console = Console()
 
@@ -20,6 +21,8 @@ class YenneferOrchestrator:
         self.ears = Ears(config)
         self.voice = Voice(config)
         self.brain = Brain(config)
+        self.speech_lock = asyncio.Lock()
+        self.presence = Presence(config, self.brain, self.voice, self.speech_lock)
         self.is_running = False
         
     async def initialize(self):
@@ -45,7 +48,9 @@ class YenneferOrchestrator:
         console.print("[dim]  'credits' - show ElevenLabs usage[/dim]")
         console.print("[dim]  'voice'   - show voice settings[/dim]")
         console.print("[dim]Voice input: Press Win+H to dictate[/dim]\n")
-        
+
+        await self.presence.start()
+
         try:
             while self.is_running:
                 user_input = await self.ears.listen()
@@ -80,7 +85,9 @@ class YenneferOrchestrator:
                 response = await self.brain.think(user_input)
                 
                 if response.get('text'):
-                    await self.voice.speak(response['text'])
+                    async with self.speech_lock:
+                        await self.voice.speak(response['text'])
+                    self.presence.notify_spoke()
                 
                 print()
                 
@@ -90,6 +97,7 @@ class YenneferOrchestrator:
     async def shutdown(self):
         """Shutdown Yennefer."""
         self.is_running = False
+        await self.presence.stop()
         await self.voice.speak("Until next time.")
         self.ears.cleanup()
         self.voice.cleanup()

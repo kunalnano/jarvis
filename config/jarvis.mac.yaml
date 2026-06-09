@@ -29,3 +29,20 @@ llm:
 # Logging
 logging:
   level: INFO
+
+# Proactive / ambient presence (Jarvis-style: she speaks unprompted)
+presence:
+  enabled: true
+  random_interval_minutes: [30, 75]   # jittered range between spontaneous musings
+  min_gap_minutes: 20                  # never chime within this window of last speaking
+  quiet_hours: [22, 8]                 # [start, end] 24h, silent overnight (wraps midnight)
+  greet_morning: true                  # one greeting in the morning window
+  morning_window: [7, 10]
+  end_of_day_hour: 18                  # sign-off once after this hour (null to disable)
+  max_words: 40                        # keep spontaneous lines short
+  triggers: []                         # command-watch triggers; see example below
+  # triggers:
+  #   - name: "quartermaster"
+  #     command: "git -C ~/Projects/quartermaster log -1 --format=%H"
+  #     poll_seconds: 120
+  #     line: "There's fresh movement in Quartermaster. Worth a look when you surface."

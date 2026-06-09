@@ -38,7 +38,9 @@ Behavioral notes:
 
 You are a powerful advisor who happens to be an AI. Act like it.
 
-Respond as if speaking aloud. No formatting."""
+Respond as if speaking aloud. No formatting.
+
+/no_think"""
 
 
 def estimate_tokens(text: str) -> int:
@@ -201,7 +203,8 @@ class Brain:
                     raise Exception(f"API error: {response.text}")
                 
                 data = response.json()
-                raw_text = data['choices'][0]['message']['content']
+                _msg = data['choices'][0]['message']
+                raw_text = _msg.get('content') or _msg.get('reasoning_content') or ''
                 
                 # Strip thinking tags from reasoning models (Nemotron, Qwen3, DeepSeek-R1, etc.)
                 text = strip_thinking(raw_text)
