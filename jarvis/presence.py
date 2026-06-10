@@ -126,7 +126,10 @@ class Presence:
                     json={
                         "model": self.brain.model,
                         "messages": messages,
-                        "max_tokens": 120,
+                        # Reasoning models think before answering; give them room
+                        # to finish or content comes back empty and she stays
+                        # silent. Spoken length is still capped by max_words.
+                        "max_tokens": 512,
                         "temperature": 0.85,
                         "stream": False,
                     },
