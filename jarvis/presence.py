@@ -17,6 +17,7 @@ import httpx
 from rich.console import Console
 
 from .brain import YENNEFER_SYSTEM_PROMPT, strip_thinking
+from .graph_memory import GraphMemory, build_situation, utc_ts
 
 console = Console()
 
@@ -87,6 +88,7 @@ class Presence:
         self.brain = brain
         self.voice = voice
         self.lock = speech_lock
+        self.memory = GraphMemory(config)
 
         self.last_spoke = 0.0
         self._greeted_on = None      # date we last gave a morning greeting
@@ -189,13 +191,33 @@ class Presence:
         while True:
             fired, context = await trigger.poll()
             if fired and not self._in_quiet_hours() and self._gap_ok():
+                ts = utc_ts()
                 if trigger.line:
-                    await self._say(trigger.line)
+                    line = trigger.line
                 else:
-                    await self._say(await self._generate(
+                    # Continuity lookup is fail-soft and short-fused; None when
+                    # the graph is down. Injected so she references what she
+                    # already said instead of re-adjudicating.
+                    continuity = await self.memory.fetch_continuity(trigger.name, trigger.name)
+                    line = await self._generate(build_situation(
                         f"Something changed in a process you watch ({trigger.name}). "
-                        f"React briefly and in character. Latest output:\n{context[:400]}"
+                        f"React briefly and in character. Latest output:\n{context[:400]}",
+                        continuity,
+                        trigger.name,
                     ))
+                notice = self.memory.consume_unavailable_notice()
+                if notice:
+                    line = f"{line} {notice}".strip() if line else notice
+                await self._say(line)
+                # Persist after the voice path has been served; fail-soft.
+                await self.memory.record_observation(
+                    trigger=trigger.name,
+                    severity="observation",
+                    text=line or context[:200],
+                    context=context[:400],
+                    resource=trigger.name,
+                    ts=ts,
+                )
             await asyncio.sleep(trigger.poll_seconds)
 
     # ---- lifecycle -----------------------------------------------------
@@ -205,6 +227,7 @@ class Presence:
             console.print("[dim]Presence disabled.[/dim]")
             return
         self.last_spoke = time.time()  # treat the opening line as "just spoke"
+        self.memory.reset_session()
         self._tasks.append(asyncio.create_task(self._ambient_loop()))
         self._tasks.append(asyncio.create_task(self._schedule_loop()))
         for spec in self.trigger_specs:
