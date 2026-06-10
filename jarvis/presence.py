@@ -16,7 +16,7 @@ from datetime import datetime
 import httpx
 from rich.console import Console
 
-from .brain import YENNEFER_SYSTEM_PROMPT, strip_thinking
+from .brain import YENNEFER_SYSTEM_PROMPT, extract_speakable
 from .graph_memory import GraphMemory, build_situation, utc_ts
 
 console = Console()
@@ -134,9 +134,9 @@ class Presence:
                 )
             if resp.status_code != 200:
                 return ""
-            _msg = resp.json()["choices"][0]["message"]
-            text = _msg.get("content") or _msg.get("reasoning_content") or ""
-            text = strip_thinking(text)
+            # Unprompted lines must never leak chain-of-thought: an empty
+            # extraction means she simply stays silent this round.
+            text = extract_speakable(resp.json()["choices"][0]["message"])
         except Exception:
             return ""
         words = text.split()

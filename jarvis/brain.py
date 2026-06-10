@@ -77,6 +77,24 @@ def strip_thinking(text: str) -> str:
     return text.strip()
 
 
+def extract_speakable(message: dict) -> str:
+    """Final speakable text from a chat completion message.
+
+    Never returns raw chain-of-thought. Reasoning models sometimes put
+    everything in reasoning_content and leave content empty (especially when
+    max_tokens is exhausted mid-think); speaking that aloud recites her own
+    instructions. reasoning_content is only consulted when it contains a
+    closing think tag, meaning a real answer follows the reasoning.
+    """
+    content = strip_thinking(message.get('content') or '')
+    if content:
+        return content
+    reasoning = message.get('reasoning_content') or ''
+    if '</think>' in reasoning or '</thinking>' in reasoning:
+        return strip_thinking(reasoning)
+    return ''
+
+
 class Brain:
     """LM Studio powered reasoning engine for Yennefer."""
     
@@ -204,10 +222,10 @@ class Brain:
                 
                 data = response.json()
                 _msg = data['choices'][0]['message']
-                raw_text = _msg.get('content') or _msg.get('reasoning_content') or ''
-                
-                # Strip thinking tags from reasoning models (Nemotron, Qwen3, DeepSeek-R1, etc.)
-                text = strip_thinking(raw_text)
+
+                # Reasoning models (Nemotron, Qwen3, DeepSeek-R1, etc.): take the
+                # final answer only, never raw chain-of-thought.
+                text = extract_speakable(_msg)
                 
                 # Get actual token usage if API provides it
                 usage = data.get('usage', {})
