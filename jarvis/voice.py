@@ -3,6 +3,7 @@ Voice - Text-to-Speech Output
 
 Supports:
 - ElevenLabs (premium, cross-platform)
+- Chatterbox (self-hosted Chatterbox-TTS-Server, OpenAI-compatible API)
 - macOS native TTS (free, Mac only)
 """
 
@@ -69,6 +70,15 @@ class Voice:
         self.speed = self.config.get('speed', 1.0)  # Stored but may not be supported
         self.use_speaker_boost = self.config.get('use_speaker_boost', True)
 
+        # Chatterbox settings (self-hosted Chatterbox-TTS-Server)
+        chatterbox = self.config.get('chatterbox', {})
+        self.chatterbox_api_base = chatterbox.get('api_base', 'http://localhost:8004').rstrip('/')
+        self.chatterbox_voice = chatterbox.get('voice', 'default')
+        self.chatterbox_speed = chatterbox.get('speed', self.speed)
+        # Extra fields merged into the request body (e.g. exaggeration) so the
+        # server's dials are tunable from config without code changes.
+        self.chatterbox_params = chatterbox.get('params', {})
+
         # macOS settings
         self.macos_voice = self.config.get('macos_voice', 'Samantha')
         self.rate = self.config.get('rate', 180)
@@ -82,6 +92,11 @@ class Voice:
 
     async def initialize(self):
         """Initialize TTS engine."""
+        # Explicit chatterbox wins over elevenlabs auto-detect
+        if self.config.get('engine') == 'chatterbox':
+            await self._init_chatterbox()
+            return
+
         # Auto-detect engine if voice_id is set
         if self.voice_id and self.api_key:
             self.engine = 'elevenlabs'
@@ -192,6 +207,41 @@ class Voice:
             f"[dim]{used:,}/{limit:,} chars ({percent_used:.1f}%) • {remaining:,} remaining • {tier}[/dim]"
         )
 
+    async def _init_chatterbox(self):
+        """Initialize Chatterbox: confirm the server is reachable, else degrade."""
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                # Any response (even 404 on /health) means the server is up
+                resp = await client.get(f"{self.chatterbox_api_base}/health")
+                if resp.status_code >= 500:
+                    raise RuntimeError(f"server unhealthy (HTTP {resp.status_code})")
+        except Exception as e:
+            console.print(
+                f"[yellow]Chatterbox unreachable at {self.chatterbox_api_base}: {e}[/yellow]"
+            )
+            await self._fallback_from_chatterbox()
+            return
+
+        self.initialized = True
+        self.engine = 'chatterbox'
+        console.print(
+            f"[green]✓[/green] Chatterbox ready "
+            f"({self.chatterbox_api_base}, voice: {self.chatterbox_voice}, speed: {self.chatterbox_speed}x)"
+        )
+
+    async def _fallback_from_chatterbox(self):
+        """Degrade chatterbox → elevenlabs → macOS say, mirroring the daemon's retry chain."""
+        if self.api_key and self.voice_id:
+            console.print("[dim]Falling back to ElevenLabs[/dim]")
+            await self._init_elevenlabs()
+        elif sys.platform == 'darwin':
+            console.print("[dim]Falling back to macOS TTS[/dim]")
+            await self._init_macos()
+        else:
+            console.print("[red]✗[/red] No fallback TTS engine available")
+
     async def _init_macos(self):
         """Initialize macOS native TTS."""
         if sys.platform != 'darwin':
@@ -217,6 +267,8 @@ class Voice:
 
         if self.engine == 'elevenlabs':
             await self._speak_elevenlabs(speech_text)
+        elif self.engine == 'chatterbox':
+            await self._speak_chatterbox(speech_text)
         elif self.engine == 'macos':
             await self._speak_macos(speech_text)
 
@@ -267,6 +319,45 @@ class Voice:
 
         except Exception as e:
             console.print(f"[yellow]TTS error: {e}[/yellow]")
+
+    async def _speak_chatterbox(self, text: str):
+        """Speak via Chatterbox-TTS-Server's OpenAI-compatible endpoint."""
+        import httpx
+
+        payload = {
+            'model': 'chatterbox',
+            'input': text,
+            'voice': self.chatterbox_voice,
+            'response_format': 'wav',
+            'speed': self.chatterbox_speed,
+            **self.chatterbox_params,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(
+                    f"{self.chatterbox_api_base}/v1/audio/speech", json=payload
+                )
+                resp.raise_for_status()
+                audio_bytes = resp.content
+
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+                f.write(audio_bytes)
+                temp_path = f.name
+
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: subprocess.run(["afplay", temp_path], check=True)
+            )
+
+            Path(temp_path).unlink(missing_ok=True)
+
+        except Exception as e:
+            console.print(f"[yellow]Chatterbox TTS error: {e}[/yellow]")
+            # Don't go mute mid-sentence: degrade to local say for this utterance
+            if sys.platform == 'darwin':
+                await self._speak_macos(text)
 
     async def _speak_macos(self, text: str):
         """Speak using macOS native TTS."""
