@@ -20,11 +20,13 @@ from pydantic import BaseModel
 from .brain import Brain, YENNEFER_SYSTEM_PROMPT, extract_speakable
 from .voice import Voice
 from .config import load_config
+from .playbooks import PlaybookEngine
 from . import tools
 
 CONFIG = load_config()
 BRAIN = Brain(CONFIG)
 VOICE = Voice(CONFIG)
+PLAYBOOKS = PlaybookEngine(CONFIG)
 WEB = Path(__file__).parent / "web"
 
 SYSTEM = (
@@ -80,6 +82,12 @@ async def _summarise_action(name, args, result, speak):
 async def _startup():
     await VOICE.initialize()
     await BRAIN.initialize()
+    await PLAYBOOKS.start()
+
+
+@app.on_event("shutdown")
+async def _shutdown():
+    await PLAYBOOKS.stop()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -99,9 +107,28 @@ async def chat(body: ChatIn):
         return JSONResponse({"reply": reply, "actions": actions})
 
     if body.decline:
-        reply = "As you wish. I'll leave it."
+        playbook_result = await PLAYBOOKS.handle_chat("later")
+        reply = playbook_result["reply"] if playbook_result else "As you wish. I'll leave it."
         HISTORY.append({"role": "assistant", "content": reply})
         return JSONResponse({"reply": reply, "actions": actions})
+
+    if body.message:
+        playbook_result = await PLAYBOOKS.handle_chat(body.message)
+        if playbook_result:
+            reply = playbook_result["reply"]
+            HISTORY.append({"role": "user", "content": body.message})
+            HISTORY.append({"role": "assistant", "content": reply})
+            if body.speak:
+                await VOICE.speak(reply)
+            return JSONResponse({
+                "reply": reply,
+                "actions": actions,
+                "playbook": {
+                    "status": playbook_result["status"],
+                    "active": playbook_result.get("active"),
+                    "snooze_until": playbook_result.get("snooze_until"),
+                },
+            })
 
     HISTORY.append({"role": "user", "content": body.message or ""})
     msg = await _complete(_convo(), with_tools=True)
