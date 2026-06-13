@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 import httpx
 from rich.console import Console
@@ -30,8 +31,10 @@ DEFAULT_VAULT_PLAYBOOKS = (
 )
 DEFAULT_STATE_PATH = "~/.yennefer/state.json"
 DEFAULT_PAUSE_PATH = "~/.yennefer/pause"
+DEFAULT_HANDOFF_DIR = "~/.yennefer/handoffs"
 DEFAULT_INTERVAL_SECONDS = 15 * 60
 DEFAULT_JITTER_SECONDS = 90
+DEFAULT_PM_TIMEZONE = "America/Chicago"
 LINEAR_GRAPHQL_URL = "https://api.linear.app/graphql"
 
 GO_AHEAD_PHRASES = (
@@ -80,6 +83,7 @@ class LinearIssue:
     url: str = ""
     created_at: str = ""
     updated_at: str = ""
+    due_date: str = ""
     state: str = ""
     state_type: str = ""
     labels: tuple[str, ...] = ()
@@ -126,6 +130,7 @@ class LinearBoardClient:
           }) {
             nodes {
               id identifier title url createdAt updatedAt priority
+              dueDate
               state { name type }
               project { name }
               labels { nodes { name } }
@@ -145,6 +150,7 @@ class LinearBoardClient:
           }) {
             nodes {
               id identifier title url createdAt updatedAt priority
+              dueDate
               state { name type }
               project { name }
               labels { nodes { name } }
@@ -182,6 +188,7 @@ class LinearBoardClient:
             success
             issue {{
               id identifier title url createdAt updatedAt priority
+              dueDate
               state {{ name type }}
               project {{ name }}
               labels {{ nodes {{ name }} }}
@@ -317,10 +324,35 @@ class PlaybookEngine:
         self.project = pc.get("project") or "Yennefer"
         self.vault_path = _expand_path(str(pc.get("vault_path") or DEFAULT_VAULT_PLAYBOOKS))
         self.pause_path = _expand_path(str(pc.get("pause_path") or DEFAULT_PAUSE_PATH))
+        self.handoff_dir = _expand_path(str(pc.get("handoff_dir") or DEFAULT_HANDOFF_DIR))
         self.state = PlaybookState(_expand_path(str(pc.get("state_path") or DEFAULT_STATE_PATH)))
         self.client = client or LinearBoardClient(team=self.team)
         self.notifier = notifier or ShortcutNotifier(config)
         self.now_fn = now_fn or (lambda: datetime.now(timezone.utc))
+        pm = config.get("pm", {}) or {}
+        self.pm_timezone = str(pm.get("timezone") or DEFAULT_PM_TIMEZONE)
+        self.weekend_mode = str(pm.get("weekend_mode") or "auto").lower()
+        self.weekend_personal_projects = tuple(
+            str(name).strip()
+            for name in pm.get("weekend_personal_projects", ("Yennefer", "HELM"))
+            if str(name).strip()
+        )
+        self.weekend_personal_keywords = tuple(
+            str(word).strip().lower()
+            for word in pm.get(
+                "weekend_personal_keywords",
+                (
+                    "personal",
+                    "assistant",
+                    "presence",
+                    "yennefer",
+                    "helm native",
+                    "swift native",
+                    "weekend",
+                ),
+            )
+            if str(word).strip()
+        )
         self._tasks: list[asyncio.Task] = []
 
     async def start(self) -> None:
@@ -399,9 +431,10 @@ class PlaybookEngine:
             self.state.save(data)
             return result
 
+        result = self._run_pm_governor(queue_eligible, data, now)
         data["last_evaluated_at"] = isoformat(now)
         self.state.save(data)
-        return {"status": "idle", "queue_eligible": len(queue_eligible)}
+        return result
 
     async def handle_chat(self, message: str) -> dict | None:
         data = self.state.load()
@@ -510,6 +543,134 @@ class PlaybookEngine:
         data["hand_up"] = _overlay_hand_up(hand_up)
         await self._notify_hand_up(data, hand_up, now)
         return {"status": "drafted", "playbook_id": "PB-2", "drafted": len(created)}
+
+    def _run_pm_governor(
+        self,
+        queue_eligible: list[LinearIssue],
+        data: dict,
+        now: datetime,
+    ) -> dict:
+        ranked = sorted(queue_eligible, key=_queue_rank)
+        weekend = self._weekend_personal_pass(now)
+        skipped: list[LinearIssue] = []
+        candidates = ranked
+        if weekend:
+            candidates = [
+                issue for issue in ranked
+                if _is_weekend_personal_issue(
+                    issue,
+                    self.weekend_personal_projects,
+                    self.weekend_personal_keywords,
+                )
+            ]
+            skipped = [issue for issue in ranked if issue not in candidates]
+
+        if not candidates:
+            data["pm"] = {
+                "status": "weekend_personal_queue_empty" if weekend else "queue_empty",
+                "weekend_personal_pass": weekend,
+                "last_governed_at": isoformat(now),
+                "queue_eligible": len(ranked),
+                "skipped_for_weekend": [_issue_packet(issue) for issue in skipped[:8]],
+                "next_action": None,
+            }
+            return {
+                "status": data["pm"]["status"],
+                "queue_eligible": len(ranked),
+                "skipped_for_weekend": len(skipped),
+            }
+
+        selected = candidates[0]
+        handoff_path = self._write_worker_handoff(selected, ranked, skipped, weekend, now)
+        next_action = {
+            **_issue_packet(selected),
+            "rank": 1,
+            "handoff_path": str(handoff_path),
+            "instruction": (
+                f"Start a worker on {selected.identifier}. "
+                f"Use the handoff file at {handoff_path}."
+            ),
+        }
+        data["pm"] = {
+            "status": "next_action",
+            "weekend_personal_pass": weekend,
+            "last_governed_at": isoformat(now),
+            "queue_eligible": len(ranked),
+            "queue": [_issue_packet(issue) for issue in candidates[:8]],
+            "skipped_for_weekend": [_issue_packet(issue) for issue in skipped[:8]],
+            "next_action": next_action,
+        }
+        return {
+            "status": "pm_next_action",
+            "next": selected.identifier,
+            "queue_eligible": len(ranked),
+            "weekend_personal_pass": weekend,
+            "handoff_path": str(handoff_path),
+        }
+
+    def _write_worker_handoff(
+        self,
+        selected: LinearIssue,
+        ranked: list[LinearIssue],
+        skipped: list[LinearIssue],
+        weekend: bool,
+        now: datetime,
+    ) -> Path:
+        self.handoff_dir.mkdir(parents=True, exist_ok=True)
+        safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", selected.identifier or "issue")
+        path = self.handoff_dir / f"{isoformat(now).replace(':', '').replace('Z', '')}-{safe_id}.md"
+        lines = [
+            f"# Yennefer Worker Handoff - {selected.identifier}",
+            "",
+            f"Created: {isoformat(now)}",
+            f"Weekend personal pass: {str(weekend).lower()}",
+            "",
+            "## Execute",
+            "",
+            f"Run the active worker flow for `{selected.identifier}`.",
+            "Do not treat this as a note; pick up the card, execute the spec, and leave evidence.",
+            "",
+            "## Ticket",
+            "",
+            f"- ID: {selected.identifier}",
+            f"- Title: {selected.title}",
+            f"- Project: {selected.project or '(none)'}",
+            f"- State: {selected.state or '(unknown)'}",
+            f"- Priority: {selected.priority}",
+            f"- URL: {selected.url or '(none)'}",
+            "",
+            "## Guardrails",
+            "",
+            "- Preserve Linear labels when updating cards.",
+            "- Do not mark Done automatically; Done requires chair-approved merge or explicit human confirmation.",
+            "- If a blocker appears, comment evidence on the card and move to chair-call/In Review as appropriate.",
+            "- If the ticket touches credentials, public deploys, external comms, destructive deletion, or access controls, require visible chair approval.",
+            "",
+            "## Queue Snapshot",
+            "",
+        ]
+        for index, issue in enumerate(ranked[:8], start=1):
+            lines.append(
+                f"{index}. {issue.identifier} - {issue.title} "
+                f"[priority={issue.priority}, state={issue.state}, project={issue.project}]"
+            )
+        if skipped:
+            lines.extend(["", "## Skipped For Weekend Personal Pass", ""])
+            for issue in skipped[:8]:
+                lines.append(f"- {issue.identifier} - {issue.title} ({issue.project})")
+        path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        return path
+
+    def _weekend_personal_pass(self, now: datetime) -> bool:
+        if self.weekend_mode in {"off", "false", "0", "regular"}:
+            return False
+        if self.weekend_mode in {"on", "true", "1", "weekend"}:
+            return True
+        try:
+            local_now = now.astimezone(ZoneInfo(self.pm_timezone))
+        except Exception:
+            local_now = now
+        return local_now.weekday() >= 5
 
     def _pb2_candidates(self, now: datetime) -> list[dict]:
         stamp = isoformat(now)
@@ -648,6 +809,7 @@ def _issue(node: dict | None) -> LinearIssue:
         url=str(node.get("url") or ""),
         created_at=str(node.get("createdAt") or node.get("created_at") or ""),
         updated_at=str(node.get("updatedAt") or node.get("updated_at") or ""),
+        due_date=str(node.get("dueDate") or node.get("due_date") or ""),
         state=str(state.get("name") or node.get("state") or ""),
         state_type=str(state.get("type") or node.get("state_type") or ""),
         labels=labels,
@@ -668,9 +830,32 @@ def _queue_eligible(issue: LinearIssue) -> bool:
         return False
     if issue.priority == 0:
         return False
+    if issue.state_type and issue.state_type != "unstarted":
+        return False
+    if issue.state and issue.state.lower() not in {"todo", "to do"}:
+        return False
     if issue.state_type in {"completed", "canceled"}:
         return False
     return True
+
+
+def _queue_rank(issue: LinearIssue) -> tuple[int, str, str, str]:
+    due = issue.due_date or "9999-12-31"
+    created = issue.created_at or "9999-12-31T23:59:59Z"
+    return (issue.priority, due, created, issue.identifier)
+
+
+def _is_weekend_personal_issue(
+    issue: LinearIssue,
+    personal_projects: tuple[str, ...],
+    personal_keywords: tuple[str, ...],
+) -> bool:
+    project = (issue.project or "").strip().lower()
+    personal_project_names = {name.lower() for name in personal_projects}
+    if project in personal_project_names:
+        return True
+    haystack = " ".join([issue.identifier, issue.title, issue.project, *issue.labels]).lower()
+    return any(keyword in haystack for keyword in personal_keywords)
 
 
 def _is_waiting(active: dict | None) -> bool:
