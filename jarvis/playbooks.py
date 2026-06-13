@@ -208,6 +208,46 @@ class LinearBoardClient:
         await self._graphql(query, {"issueId": issue_id, "body": body})
 
 
+class ShortcutNotifier:
+    """Fail-soft wrapper around macOS `shortcuts run`."""
+
+    def __init__(self, config: dict | None = None):
+        sc = (config or {}).get("shortcuts", {}) or {}
+        self.enabled = bool(sc.get("notify_enabled", False))
+        self.shortcut_name = str(sc.get("notify_shortcut") or "Yennefer Says")
+        self.timeout_seconds = float(sc.get("notify_timeout_seconds", 10))
+
+    async def notify(self, text: str) -> dict:
+        if not self.enabled:
+            return {"ok": False, "skipped": "disabled"}
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as fh:
+                fh.write(text)
+                temp_path = fh.name
+            proc = await asyncio.create_subprocess_exec(
+                "shortcuts",
+                "run",
+                self.shortcut_name,
+                "--input-path",
+                temp_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                out, _ = await asyncio.wait_for(proc.communicate(), timeout=self.timeout_seconds)
+            except asyncio.TimeoutError:
+                proc.kill()
+                return {"ok": False, "error": "timeout"}
+            output = out.decode("utf-8", "replace").strip()
+            return {"ok": proc.returncode == 0, "output": output[:500]}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
+
+
 class PlaybookState:
     def __init__(self, path: Path):
         self.path = path
@@ -265,6 +305,7 @@ class PlaybookEngine:
         self,
         config: dict | None = None,
         client: LinearBoardClient | None = None,
+        notifier: ShortcutNotifier | None = None,
         now_fn: Callable[[], datetime] | None = None,
     ):
         config = config or {}
@@ -278,6 +319,7 @@ class PlaybookEngine:
         self.pause_path = _expand_path(str(pc.get("pause_path") or DEFAULT_PAUSE_PATH))
         self.state = PlaybookState(_expand_path(str(pc.get("state_path") or DEFAULT_STATE_PATH)))
         self.client = client or LinearBoardClient(team=self.team)
+        self.notifier = notifier or ShortcutNotifier(config)
         self.now_fn = now_fn or (lambda: datetime.now(timezone.utc))
         self._tasks: list[asyncio.Task] = []
 
@@ -338,6 +380,7 @@ class PlaybookEngine:
             )
             data["active"] = hand_up
             data["hand_up"] = _overlay_hand_up(hand_up)
+            await self._notify_hand_up(data, hand_up, now)
             data["last_evaluated_at"] = isoformat(now)
             self.state.save(data)
             return {"status": "hand_up", "playbook_id": "PB-1"}
@@ -465,6 +508,7 @@ class PlaybookEngine:
         }
         data["active"] = hand_up
         data["hand_up"] = _overlay_hand_up(hand_up)
+        await self._notify_hand_up(data, hand_up, now)
         return {"status": "drafted", "playbook_id": "PB-2", "drafted": len(created)}
 
     def _pb2_candidates(self, now: datetime) -> list[dict]:
@@ -506,6 +550,14 @@ class PlaybookEngine:
             count = len(active.get("payload", {}).get("drafted_tickets", []))
             return f"Approved. I drafted {count} needs-spec candidates. Rank only the ones you want built."
         return "Approved. I am ready to walk the next step."
+
+    async def _notify_hand_up(self, data: dict, hand_up: dict, now: datetime) -> None:
+        result = await self.notifier.notify(hand_up.get("opener") or "")
+        data["last_notification"] = {
+            "ts": isoformat(now),
+            "playbook_id": hand_up.get("playbook_id"),
+            **result,
+        }
 
 
 def parse_playbooks(markdown: str) -> dict[str, Playbook]:

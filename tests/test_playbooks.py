@@ -60,7 +60,16 @@ class FakeLinear:
         )
 
 
-def make_engine(tmp_path, fake):
+class FakeNotifier:
+    def __init__(self):
+        self.messages = []
+
+    async def notify(self, text):
+        self.messages.append(text)
+        return {"ok": True, "output": "notified"}
+
+
+def make_engine(tmp_path, fake, notifier=None):
     tmp_path.mkdir(parents=True, exist_ok=True)
     vault_path = tmp_path / "Yennefer Playbooks.md"
     vault_path.write_text(PLAYBOOKS_MD, encoding="utf-8")
@@ -79,6 +88,7 @@ def make_engine(tmp_path, fake):
             }
         },
         client=fake,
+        notifier=notifier,
         now_fn=lambda: NOW,
     )
 
@@ -191,3 +201,25 @@ def test_pause_file_halts_evaluation_without_linear_calls(tmp_path):
     result = asyncio.run(engine.evaluate_once())
     assert result["status"] == "hand_up"
     assert fake.calls[0][0] == "chair"
+
+
+def test_hand_up_notifies_shortcuts_when_notifier_enabled(tmp_path):
+    fake = FakeLinear(chair_calls=[
+        LinearIssue(
+            id="issue-1",
+            identifier="DAR-99",
+            title="Synthetic chair-call",
+            created_at="2026-06-12T10:00:00Z",
+            labels=("chair-call",),
+        )
+    ])
+    notifier = FakeNotifier()
+    engine = make_engine(tmp_path, fake, notifier=notifier)
+
+    result = asyncio.run(engine.evaluate_once())
+    state = load_state(engine)
+
+    assert result == {"status": "hand_up", "playbook_id": "PB-1"}
+    assert notifier.messages[0].startswith("Two decisions are waiting")
+    assert state["last_notification"]["ok"] is True
+    assert state["last_notification"]["playbook_id"] == "PB-1"
