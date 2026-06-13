@@ -21,6 +21,7 @@ from .brain import Brain, YENNEFER_SYSTEM_PROMPT, extract_speakable
 from .voice import Voice
 from .config import load_config
 from .playbooks import PlaybookEngine
+from .shortcuts_bridge import install_shortcuts_routes
 from . import tools
 
 CONFIG = load_config()
@@ -68,6 +69,14 @@ async def _complete(messages, with_tools=True):
     return r.json()["choices"][0]["message"]
 
 
+async def _ask_for_shortcuts(question: str) -> str:
+    messages = [
+        {"role": "system", "content": SYSTEM + "\n\nShortcuts voice mode: answer in three sentences or fewer."},
+        {"role": "user", "content": question},
+    ]
+    return _text(await _complete(messages, with_tools=False)) or "I have nothing useful to say yet."
+
+
 async def _summarise_action(name, args, result, speak):
     follow = _convo() + [{"role": "user", "content":
         f"(You ran {name}({json.dumps(args)}). Result:\n{result[:1500]}\nSummarise for the user, briefly and in character.)"}]
@@ -88,6 +97,9 @@ async def _startup():
 @app.on_event("shutdown")
 async def _shutdown():
     await PLAYBOOKS.stop()
+
+
+install_shortcuts_routes(app, CONFIG, _ask_for_shortcuts, PLAYBOOKS)
 
 
 @app.get("/", response_class=HTMLResponse)

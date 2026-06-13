@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from jarvis.playbooks import LinearIssue, PlaybookEngine, parse_playbooks
 
@@ -60,7 +60,16 @@ class FakeLinear:
         )
 
 
-def make_engine(tmp_path, fake):
+class FakeNotifier:
+    def __init__(self):
+        self.messages = []
+
+    async def notify(self, text):
+        self.messages.append(text)
+        return {"ok": True, "output": "notified"}
+
+
+def make_engine(tmp_path, fake, notifier=None):
     tmp_path.mkdir(parents=True, exist_ok=True)
     vault_path = tmp_path / "Yennefer Playbooks.md"
     vault_path.write_text(PLAYBOOKS_MD, encoding="utf-8")
@@ -72,6 +81,7 @@ def make_engine(tmp_path, fake):
                 "vault_path": str(vault_path),
                 "state_path": str(state_path),
                 "pause_path": str(pause_path),
+                "handoff_dir": str(tmp_path / "handoffs"),
                 "interval_seconds": 900,
                 "jitter_seconds": 0,
                 "team": "Darkvectorcognition",
@@ -79,6 +89,7 @@ def make_engine(tmp_path, fake):
             }
         },
         client=fake,
+        notifier=notifier,
         now_fn=lambda: NOW,
     )
 
@@ -173,6 +184,117 @@ def test_pb2_drafts_needs_spec_candidates_without_ranking(tmp_path):
     assert all("needs-spec" in draft["labels"] for draft in state["drafts"])
 
 
+def test_pm_governor_writes_next_action_and_worker_handoff(tmp_path):
+    fake = FakeLinear(
+        chair_calls=[],
+        queue_eligible=[
+            LinearIssue(
+                id="issue-1",
+                identifier="DAR-42",
+                title="HELM Native v1",
+                url="https://linear.app/dar/issue/DAR-42",
+                created_at="2026-06-13T01:00:00Z",
+                state="Todo",
+                state_type="unstarted",
+                labels=("spec-driven", "council"),
+                priority=2,
+                project="HELM",
+            )
+        ],
+    )
+    engine = make_engine(tmp_path, fake)
+
+    result = asyncio.run(engine.evaluate_once())
+    state = load_state(engine)
+
+    assert result["status"] == "pm_next_action"
+    assert result["next"] == "DAR-42"
+    assert state["active"] is None
+    assert state["pm"]["status"] == "next_action"
+    assert state["pm"]["next_action"]["identifier"] == "DAR-42"
+    handoff = state["pm"]["next_action"]["handoff_path"]
+    assert "DAR-42" in handoff
+    text = open(handoff, encoding="utf-8").read()
+    assert "Do not treat this as a note" in text
+    assert "Run the active worker flow for `DAR-42`." in text
+
+
+def test_weekend_filter_skips_commercial_work_before_selecting_next_action(tmp_path):
+    fake = FakeLinear(
+        chair_calls=[],
+        queue_eligible=[
+            LinearIssue(
+                id="work",
+                identifier="DAR-47",
+                title="Animate the DVC website with the LLM-directed engine",
+                created_at="2026-06-13T01:00:00Z",
+                state="Todo",
+                state_type="unstarted",
+                labels=("spec-driven", "council"),
+                priority=1,
+                project="DVC Ops",
+            ),
+            LinearIssue(
+                id="personal",
+                identifier="DAR-42",
+                title="HELM Native v1",
+                created_at="2026-06-13T02:00:00Z",
+                state="Todo",
+                state_type="unstarted",
+                labels=("spec-driven", "council"),
+                priority=3,
+                project="HELM",
+            ),
+        ],
+    )
+    engine = make_engine(tmp_path, fake)
+
+    result = asyncio.run(engine.evaluate_once())
+    state = load_state(engine)
+
+    assert result["status"] == "pm_next_action"
+    assert result["weekend_personal_pass"] is True
+    assert result["next"] == "DAR-42"
+    assert state["pm"]["next_action"]["identifier"] == "DAR-42"
+    assert state["pm"]["skipped_for_weekend"][0]["identifier"] == "DAR-47"
+
+
+def test_chair_call_preempts_pm_queue_governor(tmp_path):
+    fake = FakeLinear(
+        chair_calls=[
+            LinearIssue(
+                id="issue-1",
+                identifier="DAR-41",
+                title="Panel-list sign-off",
+                created_at="2026-06-12T10:00:00Z",
+                labels=("chair-call", "council"),
+                priority=1,
+            )
+        ],
+        queue_eligible=[
+            LinearIssue(
+                id="issue-2",
+                identifier="DAR-42",
+                title="HELM Native v1",
+                state="Todo",
+                state_type="unstarted",
+                labels=("spec-driven", "council"),
+                priority=1,
+                project="HELM",
+            )
+        ],
+    )
+    engine = make_engine(tmp_path, fake)
+
+    result = asyncio.run(engine.evaluate_once())
+    state = load_state(engine)
+
+    assert result == {"status": "hand_up", "playbook_id": "PB-1"}
+    assert state["active"]["playbook_id"] == "PB-1"
+    assert state.get("pm") is None
+    assert fake.calls == [("chair", NOW - timedelta(hours=24))]
+
+
 def test_pause_file_halts_evaluation_without_linear_calls(tmp_path):
     fake = FakeLinear(chair_calls=[
         LinearIssue(id="issue-1", identifier="DAR-99", title="Synthetic chair-call")
@@ -191,3 +313,25 @@ def test_pause_file_halts_evaluation_without_linear_calls(tmp_path):
     result = asyncio.run(engine.evaluate_once())
     assert result["status"] == "hand_up"
     assert fake.calls[0][0] == "chair"
+
+
+def test_hand_up_notifies_shortcuts_when_notifier_enabled(tmp_path):
+    fake = FakeLinear(chair_calls=[
+        LinearIssue(
+            id="issue-1",
+            identifier="DAR-99",
+            title="Synthetic chair-call",
+            created_at="2026-06-12T10:00:00Z",
+            labels=("chair-call",),
+        )
+    ])
+    notifier = FakeNotifier()
+    engine = make_engine(tmp_path, fake, notifier=notifier)
+
+    result = asyncio.run(engine.evaluate_once())
+    state = load_state(engine)
+
+    assert result == {"status": "hand_up", "playbook_id": "PB-1"}
+    assert notifier.messages[0].startswith("Two decisions are waiting")
+    assert state["last_notification"]["ok"] is True
+    assert state["last_notification"]["playbook_id"] == "PB-1"
