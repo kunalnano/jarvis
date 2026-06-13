@@ -4,7 +4,12 @@ Voice - Text-to-Speech Output
 Supports:
 - ElevenLabs (premium, cross-platform)
 - Chatterbox (self-hosted Chatterbox-TTS-Server, OpenAI-compatible API)
+- Kokoro-82M via mlx-audio (local Apple Silicon, fixed voicepacks)
 - macOS native TTS (free, Mac only)
+
+Degradation chain (Flight 002): chatterbox → kokoro → elevenlabs → macOS say.
+Kokoro is the house fallback so that when Stormbreaker sleeps she downshifts
+to a local voice instead of the drip or a GPS.
 """
 
 import asyncio
@@ -79,6 +84,15 @@ class Voice:
         # server's dials are tunable from config without code changes.
         self.chatterbox_params = chatterbox.get('params', {})
 
+        # Kokoro settings (local Apple Silicon fallback via mlx-audio)
+        kokoro = self.config.get('kokoro', {})
+        self.kokoro_model = kokoro.get('model', 'prince-canuma/Kokoro-82M')
+        self.kokoro_voice = kokoro.get('voice', 'bf_emma')
+        self.kokoro_speed = kokoro.get('speed', self.speed)
+        # Raw CLI args appended to `python -m mlx_audio.tts.generate` so the
+        # generator's dials stay tunable from config without code changes.
+        self.kokoro_extra_args = [str(a) for a in kokoro.get('extra_args', [])]
+
         # macOS settings
         self.macos_voice = self.config.get('macos_voice', 'Samantha')
         self.rate = self.config.get('rate', 180)
@@ -95,6 +109,11 @@ class Voice:
         # Explicit chatterbox wins over elevenlabs auto-detect
         if self.config.get('engine') == 'chatterbox':
             await self._init_chatterbox()
+            return
+
+        # Explicit kokoro engine
+        if self.config.get('engine') == 'kokoro':
+            await self._init_kokoro()
             return
 
         # Auto-detect engine if voice_id is set
@@ -232,7 +251,17 @@ class Voice:
         )
 
     async def _fallback_from_chatterbox(self):
-        """Degrade chatterbox → elevenlabs → macOS say, mirroring the daemon's retry chain."""
+        """Degrade chatterbox → kokoro → elevenlabs → macOS say (Flight 002 chain).
+
+        Kokoro (local, in-register) outranks ElevenLabs so a sleeping
+        Stormbreaker doesn't push her back onto the drip; ElevenLabs stays
+        as a deep safety net during the decant.
+        """
+        if self._kokoro_available():
+            console.print("[dim]Falling back to Kokoro (local)[/dim]")
+            await self._init_kokoro()
+            if self.initialized:
+                return
         if self.api_key and self.voice_id:
             console.print("[dim]Falling back to ElevenLabs[/dim]")
             await self._init_elevenlabs()
@@ -241,6 +270,36 @@ class Voice:
             await self._init_macos()
         else:
             console.print("[red]✗[/red] No fallback TTS engine available")
+
+    def _kokoro_available(self) -> bool:
+        """Kokoro runs via mlx-audio, which is Apple Silicon (MLX) only."""
+        if sys.platform != 'darwin':
+            return False
+        import importlib.util
+        return importlib.util.find_spec('mlx_audio') is not None
+
+    async def _init_kokoro(self):
+        """Initialize Kokoro via mlx-audio, else degrade past it."""
+        if not self._kokoro_available():
+            console.print(
+                "[yellow]Kokoro unavailable (mlx-audio not installed or not macOS)[/yellow]"
+            )
+            if self.api_key and self.voice_id:
+                console.print("[dim]Falling back to ElevenLabs[/dim]")
+                await self._init_elevenlabs()
+            elif sys.platform == 'darwin':
+                console.print("[dim]Falling back to macOS TTS[/dim]")
+                await self._init_macos()
+            else:
+                console.print("[red]✗[/red] No fallback TTS engine available")
+            return
+
+        self.initialized = True
+        self.engine = 'kokoro'
+        console.print(
+            f"[green]✓[/green] Kokoro ready "
+            f"(model: {self.kokoro_model}, voice: {self.kokoro_voice}, speed: {self.kokoro_speed}x)"
+        )
 
     async def _init_macos(self):
         """Initialize macOS native TTS."""
@@ -269,6 +328,8 @@ class Voice:
             await self._speak_elevenlabs(speech_text)
         elif self.engine == 'chatterbox':
             await self._speak_chatterbox(speech_text)
+        elif self.engine == 'kokoro':
+            await self._speak_kokoro(speech_text)
         elif self.engine == 'macos':
             await self._speak_macos(speech_text)
 
@@ -355,7 +416,52 @@ class Voice:
 
         except Exception as e:
             console.print(f"[yellow]Chatterbox TTS error: {e}[/yellow]")
-            # Don't go mute mid-sentence: degrade to local say for this utterance
+            # Don't go mute mid-sentence: degrade through kokoro, then say
+            if self._kokoro_available():
+                await self._speak_kokoro(text)
+            elif sys.platform == 'darwin':
+                await self._speak_macos(text)
+
+    async def _speak_kokoro(self, text: str):
+        """Speak via Kokoro-82M through the mlx-audio CLI in this venv.
+
+        Uses `python -m mlx_audio.tts.generate` (the stable documented
+        interface) rather than the shifting Python API; output wavs are
+        globbed by prefix so segment-naming differences across mlx-audio
+        versions don't break playback.
+        """
+        try:
+            loop = asyncio.get_event_loop()
+            with tempfile.TemporaryDirectory() as tmpdir:
+                prefix = os.path.join(tmpdir, 'yen')
+                cmd = [
+                    sys.executable, '-m', 'mlx_audio.tts.generate',
+                    '--model', self.kokoro_model,
+                    '--text', text,
+                    '--voice', self.kokoro_voice,
+                    '--speed', str(self.kokoro_speed),
+                    '--file_prefix', prefix,
+                    *self.kokoro_extra_args,
+                ]
+                await loop.run_in_executor(
+                    None,
+                    lambda: subprocess.run(
+                        cmd, check=True, capture_output=True, timeout=120
+                    )
+                )
+
+                wavs = sorted(Path(tmpdir).glob('yen*.wav'))
+                if not wavs:
+                    raise RuntimeError('mlx-audio produced no wav output')
+                for wav in wavs:
+                    await loop.run_in_executor(
+                        None,
+                        lambda w=wav: subprocess.run(["afplay", str(w)], check=True)
+                    )
+
+        except Exception as e:
+            console.print(f"[yellow]Kokoro TTS error: {e}[/yellow]")
+            # Last local rung before silence
             if sys.platform == 'darwin':
                 await self._speak_macos(text)
 
