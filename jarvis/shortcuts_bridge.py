@@ -42,6 +42,11 @@ def install_shortcuts_routes(
             raise HTTPException(status_code=404, detail="no strategist brief found")
         return PlainTextResponse(brief)
 
+    @app.get("/pm/next")
+    async def pm_next(request: Request):
+        _require_bearer(request, config)
+        return JSONResponse({"pm": _pm_state(playbooks)})
+
     @app.post("/handup/ack")
     async def handup_ack(request: Request):
         _require_bearer(request, config)
@@ -128,6 +133,13 @@ def _active_hand_up(playbooks) -> dict | None:
         return (playbooks.state.load() or {}).get("active")
     except Exception:
         return None
+
+
+def _pm_state(playbooks) -> dict:
+    try:
+        return (playbooks.state.load() or {}).get("pm") or {"status": "unknown"}
+    except Exception:
+        return {"status": "unavailable"}
 
 
 def _expand_path(path: str) -> Path:

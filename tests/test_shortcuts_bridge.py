@@ -22,7 +22,13 @@ class FakePlaybooks:
 
 class FakeState:
     def load(self):
-        return {"active": {"playbook_id": "PB-1", "status": "waiting_for_chair"}}
+        return {
+            "active": {"playbook_id": "PB-1", "status": "waiting_for_chair"},
+            "pm": {
+                "status": "next_action",
+                "next_action": {"identifier": "DAR-42", "title": "HELM Native v1"},
+            },
+        }
 
 
 def make_client(tmp_path):
@@ -82,6 +88,17 @@ def test_handup_ack_snoozes_or_approves(tmp_path):
     assert approve.json()["status"] == "approved"
     assert ack.json()["status"] == "acknowledged"
     assert playbooks.messages == ["later", "go ahead"]
+
+
+def test_pm_next_requires_bearer_and_returns_pm_packet(tmp_path):
+    client, _ = make_client(tmp_path)
+
+    assert client.get("/pm/next").status_code == 401
+    response = client.get("/pm/next", headers=auth())
+
+    assert response.status_code == 200
+    assert response.json()["pm"]["status"] == "next_action"
+    assert response.json()["pm"]["next_action"]["identifier"] == "DAR-42"
 
 
 def test_limit_voice_reply_is_three_sentences():
