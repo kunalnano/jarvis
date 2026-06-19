@@ -9,13 +9,10 @@ from pathlib import Path
 import yaml
 
 
-def load_dotenv():
-    """Load .env file if it exists."""
-    env_path = Path(__file__).parent.parent / ".env"
-    
+def _load_env_file(env_path: Path) -> None:
     if not env_path.exists():
         return
-    
+
     with open(env_path, 'r') as f:
         for line in f:
             line = line.strip()
@@ -31,7 +28,20 @@ def load_dotenv():
                 if (value.startswith('"') and value.endswith('"')) or \
                    (value.startswith("'") and value.endswith("'")):
                     value = value[1:-1]
-                os.environ[key] = value
+                os.environ.setdefault(key, value)
+
+
+def load_dotenv():
+    """Load project and local user env files if they exist."""
+    project_env = Path(__file__).parent.parent / ".env"
+    user_env_dir = Path.home() / ".yennefer"
+
+    for env_path in (
+        project_env,
+        user_env_dir / "shortcuts.env",
+        user_env_dir / "secrets.env",
+    ):
+        _load_env_file(env_path)
 
 
 def expand_env_vars(obj):
