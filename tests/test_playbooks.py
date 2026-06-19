@@ -4,7 +4,13 @@ import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 
-from jarvis.playbooks import LinearIssue, PlaybookEngine, parse_playbooks
+from jarvis.playbooks import (
+    DesktopNotifier,
+    LinearBoardClient,
+    LinearIssue,
+    PlaybookEngine,
+    parse_playbooks,
+)
 
 
 NOW = datetime(2026, 6, 13, 16, 40, tzinfo=timezone.utc)
@@ -29,15 +35,20 @@ EVIDENCE: tickets with AUTHORED stamps citing PB-2.
 
 
 class FakeLinear:
-    def __init__(self, chair_calls=None, queue_eligible=None):
+    def __init__(self, chair_calls=None, queue_eligible=None, in_review=None):
         self.chair_calls = chair_calls or []
         self.queue_eligible = queue_eligible or []
+        self.in_review = in_review or []
         self.created = []
         self.calls = []
 
     async def list_chair_call_issues(self, older_than):
         self.calls.append(("chair", older_than))
         return self.chair_calls
+
+    async def list_in_review_issues(self):
+        self.calls.append(("review", None))
+        return self.in_review
 
     async def list_queue_eligible_issues(self):
         self.calls.append(("queue", None))
@@ -103,6 +114,40 @@ def test_parses_playbook_opener():
     assert playbooks["PB-1"].name == "Chair-Call Shepherd"
     assert playbooks["PB-1"].opener.startswith("Two decisions are waiting")
     assert "draft up to 3" in playbooks["PB-2"].pre_authorized
+
+
+def test_desktop_notifier_uses_native_macos_commands(monkeypatch):
+    calls = []
+
+    class FakeProcess:
+        returncode = 0
+
+        async def communicate(self):
+            return b"", None
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        calls.append(args)
+        return FakeProcess()
+
+    monkeypatch.setattr("jarvis.playbooks.platform.system", lambda: "Darwin")
+    monkeypatch.setattr("jarvis.playbooks.asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+
+    result = asyncio.run(
+        DesktopNotifier({"shortcuts": {"notify_enabled": True, "notify_speak": False}}).notify(
+            'Hello "chair"'
+        )
+    )
+
+    assert result == {"ok": True, "output": ""}
+    assert calls == (
+        [
+            (
+                "osascript",
+                "-e",
+                'display notification "Hello \\"chair\\"" with title "Yennefer"',
+            )
+        ]
+    )
 
 
 def test_pb1_chair_call_hand_up_writes_state(tmp_path):
@@ -219,6 +264,40 @@ def test_pm_governor_writes_next_action_and_worker_handoff(tmp_path):
     assert "Run the active worker flow for `DAR-42`." in text
 
 
+def test_linear_board_client_can_read_from_local_bridge_without_api_key():
+    class BridgeClient(LinearBoardClient):
+        def __init__(self):
+            super().__init__(api_key="", bridge_url="http://127.0.0.1:4351", bridge_token="bridge")
+            self.calls = []
+
+        async def _bridge_get(self, path, params=None):
+            self.calls.append((path, params))
+            return {
+                "issues": [
+                    {
+                        "id": "issue-1",
+                        "identifier": "DAR-42",
+                        "title": "HELM Native",
+                        "state": "Todo",
+                        "state_type": "unstarted",
+                        "labels": ["spec-driven", "council"],
+                        "comments": ["Verifier says PASS"],
+                        "priority": 2,
+                        "project": "HELM",
+                    }
+                ]
+            }
+
+    client = BridgeClient()
+
+    issues = asyncio.run(client.list_queue_eligible_issues())
+
+    assert client.calls == [("/linear/queue-eligible", None)]
+    assert issues[0].identifier == "DAR-42"
+    assert issues[0].labels == ("spec-driven", "council")
+    assert issues[0].comments == ("Verifier says PASS",)
+
+
 def test_weekend_filter_skips_commercial_work_before_selecting_next_action(tmp_path):
     fake = FakeLinear(
         chair_calls=[],
@@ -292,7 +371,91 @@ def test_chair_call_preempts_pm_queue_governor(tmp_path):
     assert result == {"status": "hand_up", "playbook_id": "PB-1"}
     assert state["active"]["playbook_id"] == "PB-1"
     assert state.get("pm") is None
-    assert fake.calls == [("chair", NOW - timedelta(hours=24))]
+    assert fake.calls == [("chair", NOW - timedelta(hours=24)), ("review", None)]
+
+
+def test_in_review_without_verifier_verdict_blocks_chair_approval(tmp_path):
+    review_issue = LinearIssue(
+        id="issue-1",
+        identifier="DAR-39",
+        title="Yennefer Siri bridge",
+        description="PR: https://github.com/dark-vector-cognition/yennefer/pull/39",
+        url="https://linear.app/dar/issue/DAR-39",
+        created_at="2026-06-12T10:00:00Z",
+        state="In Review",
+        state_type="started",
+        labels=("chair-approved", "agent:claude", "spec-driven", "council", "chair-call"),
+        priority=1,
+        project="Yennefer",
+    )
+    fake = FakeLinear(
+        chair_calls=[review_issue],
+        in_review=[review_issue],
+        queue_eligible=[
+            LinearIssue(
+                id="issue-2",
+                identifier="DAR-42",
+                title="HELM Native v1",
+                state="Todo",
+                state_type="unstarted",
+                labels=("spec-driven", "council"),
+                priority=1,
+                project="HELM",
+            )
+        ],
+    )
+    engine = make_engine(tmp_path, fake)
+
+    result = asyncio.run(engine.evaluate_once())
+    state = load_state(engine)
+
+    assert result["status"] == "needs_verifier"
+    assert result["next"] == "DAR-39"
+    assert state["active"] is None
+    assert state["hand_up"] is None
+    assert state["review"]["status"] == "needs_verifier"
+    packet = state["review"]["next_action"]
+    assert packet["review_status"] == "needs_verifier"
+    assert packet["implementer_lane"] == "agent:claude"
+    assert packet["recommended_verifier_lane"] == "agent:gemini"
+    assert packet["recommended_verifier_lane"] != packet["implementer_lane"]
+    assert packet["pr_url"] == "https://github.com/dark-vector-cognition/yennefer/pull/39"
+    assert "no_verifier_verdict" in packet["risk_flags"]
+    assert "Final recommendation: PASS | REQUEST CHANGES | HOLD/CHAIR CALL" in packet[
+        "verdict_comment_template"
+    ]
+    handoff_text = open(packet["handoff_path"], encoding="utf-8").read()
+    assert "Chair approval is blocked until a verifier verdict exists." in handoff_text
+    assert "Recommended verifier lane: agent:gemini" in handoff_text
+
+
+def test_in_review_with_verifier_verdict_allows_chair_hand_up(tmp_path):
+    review_issue = LinearIssue(
+        id="issue-1",
+        identifier="DAR-39",
+        title="Yennefer Siri bridge",
+        created_at="2026-06-12T10:00:00Z",
+        state="In Review",
+        state_type="started",
+        labels=("chair-approved", "agent:claude", "spec-driven", "council", "chair-call"),
+        comments=(
+            "## Verifier Verdict - DAR-39\n\n"
+            "Evidence checked:\n- tests passed\n\n"
+            "Final recommendation: PASS",
+        ),
+        priority=1,
+        project="Yennefer",
+    )
+    fake = FakeLinear(chair_calls=[review_issue], in_review=[review_issue])
+    engine = make_engine(tmp_path, fake)
+
+    result = asyncio.run(engine.evaluate_once())
+    state = load_state(engine)
+
+    assert result == {"status": "hand_up", "playbook_id": "PB-1"}
+    assert state["active"]["playbook_id"] == "PB-1"
+    assert state["active"]["status"] == "waiting_for_chair"
+    assert "review" not in state
 
 
 def test_pause_file_halts_evaluation_without_linear_calls(tmp_path):
@@ -315,7 +478,7 @@ def test_pause_file_halts_evaluation_without_linear_calls(tmp_path):
     assert fake.calls[0][0] == "chair"
 
 
-def test_hand_up_notifies_shortcuts_when_notifier_enabled(tmp_path):
+def test_hand_up_notifies_when_notifier_enabled(tmp_path):
     fake = FakeLinear(chair_calls=[
         LinearIssue(
             id="issue-1",

@@ -20,7 +20,7 @@ voice_output:
 # LLM Backend Settings
 llm:
   backend: lmstudio
-  api_base: "http://192.168.7.200:1234/v1"
+  api_base: "http://stormbreaker.taild13a57.ts.net:1234/v1"
   model: auto
   max_tokens: 2048
   temperature: 0.7
@@ -29,3 +29,63 @@ llm:
 # Logging
 logging:
   level: INFO
+
+# Proactive / ambient presence (Jarvis-style: she speaks unprompted)
+presence:
+  enabled: true
+  random_interval_minutes: [30, 75]   # jittered range between spontaneous musings
+  min_gap_minutes: 20                  # never chime within this window of last speaking
+  quiet_hours: [22, 8]                 # [start, end] 24h, silent overnight (wraps midnight)
+  greet_morning: true                  # one greeting in the morning window
+  morning_window: [7, 10]
+  end_of_day_hour: 18                  # sign-off once after this hour (null to disable)
+  max_words: 40                        # keep spontaneous lines short
+  triggers: []                         # command-watch triggers; see example below
+  # triggers:
+  #   - name: "quartermaster"
+  #     command: "git -C ~/Projects/quartermaster log -1 --format=%H"
+  #     poll_seconds: 120
+  #     line: "There's fresh movement in Quartermaster. Worth a look when you surface."
+
+# Web chat box (python -m jarvis.server)
+server:
+  port: 4343
+
+# Siri / Shortcuts bridge. Secrets are loaded from ~/.yennefer/shortcuts.env
+# and ~/.yennefer/secrets.env; do not commit bearer tokens.
+shortcuts:
+  briefs_dir: "~/Documents/ai/obsidian-vault/dvc/yennefer/briefs"
+  allow_unauthenticated_loopback: true
+  ask_max_tokens: 120
+  ask_timeout_seconds: 20
+  notify_enabled: true
+  notify_speak: true
+  notify_timeout_seconds: 10
+
+# Vault + Linear playbook governor. Prefer the loopback Linear bridge so
+# Yennefer only gets a narrow local token; the bridge process holds
+# LINEAR_API_KEY in ~/.yennefer/secrets.env.
+playbooks:
+  enabled: true
+  team: "Darkvectorcognition"
+  project: "Yennefer"
+  state_path: "~/.yennefer/state.json"
+  pause_path: "~/.yennefer/pause"
+  handoff_dir: "~/.yennefer/handoffs"
+  linear_bridge_url: ${YENNEFER_LINEAR_BRIDGE_URL}
+  linear_bridge_token: ${YENNEFER_LINEAR_BRIDGE_TOKEN}
+
+pm:
+  timezone: "America/Chicago"
+
+# Agents Yennefer can invoke via the run_agent tool (she confirms before running).
+# name: "command"   OR   name: {command, cwd, timeout}.  Fill in your real agents.
+agents:
+  open_vesper: "open http://127.0.0.1:4188"
+  # codex_dispatch:
+  #   command: "codex exec"
+  #   cwd: "~/Projects/quartermaster"
+  #   timeout: 60
+  # prism_council:
+  #   command: "tmux new-session -d -s yennefer-dispatch 'prism-council run'"
+  #   cwd: "~/Documents/ai/myAIProjects/helm-gold"
