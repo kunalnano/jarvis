@@ -237,6 +237,35 @@ class LinearBoardClient:
         issues = [_issue(node) for node in _nodes(data, "issues")]
         return [issue for issue in issues if _queue_eligible(issue)]
 
+    async def list_active_issues(self, states: list[str] | tuple[str, ...] | None = None) -> list[LinearIssue]:
+        state_names = [state for state in (states or []) if state]
+        if self.bridge_url:
+            params = {"states": ",".join(state_names)} if state_names else None
+            payload = await self._bridge_get("/linear/active", params)
+            return [_issue(node) for node in payload.get("issues", [])]
+
+        query = """
+        query YenneferActiveIssues($first: Int!) {
+          issues(first: $first, filter: {
+            state: { type: { nin: ["completed", "canceled"] } }
+          }) {
+            nodes {
+              id identifier title url createdAt updatedAt priority
+              dueDate
+              state { name type }
+              project { name }
+              labels { nodes { name } }
+            }
+          }
+        }
+        """
+        data = await self._graphql(query, {"first": 200})
+        issues = [_issue(node) for node in _nodes(data, "issues")]
+        if state_names:
+            wanted = {state.lower() for state in state_names}
+            issues = [issue for issue in issues if issue.state.lower() in wanted]
+        return issues
+
     async def list_in_review_issues(self) -> list[LinearIssue]:
         if self.bridge_url:
             payload = await self._bridge_get("/linear/in-review")
@@ -332,6 +361,58 @@ class LinearBoardClient:
         }
         """
         await self._graphql(query, {"issueId": issue_id, "body": body})
+
+    async def move_issue_to_state(self, issue_id: str, state_name: str) -> LinearIssue | None:
+        if self.bridge_url:
+            payload = await self._bridge_post(
+                f"/linear/issues/{issue_id}/state",
+                {"state": state_name},
+            )
+            issue = payload.get("issue")
+            return _issue(issue) if issue else None
+
+        lookup = """
+        query YenneferIssueStates($issueId: String!) {
+          issue(id: $issueId) {
+            id
+            team {
+              states {
+                nodes { id name }
+              }
+            }
+          }
+        }
+        """
+        data = await self._graphql(lookup, {"issueId": issue_id})
+        issue = data.get("issue") or {}
+        states = (((issue.get("team") or {}).get("states") or {}).get("nodes") or [])
+        target = next(
+            (state for state in states if str(state.get("name", "")).lower() == state_name.lower()),
+            None,
+        )
+        if not target:
+            raise LinearUnavailable(f"Linear state not found for issue team: {state_name}")
+
+        mutation = """
+        mutation YenneferMoveIssue($issueId: String!, $stateId: String!) {
+          issueUpdate(id: $issueId, input: { stateId: $stateId }) {
+            success
+            issue {
+              id identifier title url createdAt updatedAt priority
+              dueDate
+              state { name type }
+              project { name }
+              labels { nodes { name } }
+            }
+          }
+        }
+        """
+        moved = await self._graphql(
+            mutation,
+            {"issueId": issue_id, "stateId": target["id"]},
+        )
+        node = ((moved.get("issueUpdate") or {}).get("issue") or None)
+        return _issue(node) if node else None
 
 
 def _applescript_string(value: str) -> str:

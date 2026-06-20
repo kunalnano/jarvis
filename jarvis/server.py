@@ -35,7 +35,8 @@ SYSTEM = (
     + "\n\nYou have hands: tools to act on the user's Mac (check status, open apps or "
     "URLs, inspect repos, run registered agents). When the user asks you to DO "
     "something, call the right tool instead of describing how. If nothing fits, just "
-    "answer. Keep replies short."
+    "answer. Use linear_counts for scoped Linear ticket counts, and use "
+    "screen_context before making claims about the current visible screen. Keep replies short."
 )
 
 HISTORY = [{"role": "system", "content": SYSTEM}]
