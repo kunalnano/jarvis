@@ -1,5 +1,7 @@
 """Local Linear bridge routes."""
 
+import json
+
 from fastapi.testclient import TestClient
 
 from jarvis.linear_bridge import create_app
@@ -192,9 +194,17 @@ def test_bridge_exposes_review_comments_and_safe_writes(tmp_path):
     assert commented.status_code == 200
     assert fake.comments == [("DAR-48", "Verifier verdict")]
 
-    audit = audit_log.read_text(encoding="utf-8")
-    assert "linear.issue.create_needs_spec" in audit
-    assert "linear.issue.comment" in audit
+    audit = [json.loads(line) for line in audit_log.read_text(encoding="utf-8").splitlines()]
+    create = next(entry for entry in audit if entry["action"] == "linear.issue.create_needs_spec")
+    comment = next(entry for entry in audit if entry["action"] == "linear.issue.comment")
+    assert create["details"]["issue"] == "DAR-100"
+    assert create["details"]["before_state"] is None
+    assert create["details"]["after_state"] == "created"
+    assert create["details"]["prompt_summary"] == "Spec me"
+    assert comment["details"]["issue"] == "DAR-48"
+    assert comment["details"]["before_state"] == "In Review"
+    assert comment["details"]["after_state"] == "In Review"
+    assert comment["details"]["prompt_summary"] == "Verifier verdict"
 
 
 def test_state_moves_require_approval_and_are_audited(tmp_path):
@@ -223,7 +233,15 @@ def test_state_moves_require_approval_and_are_audited(tmp_path):
     assert moved.status_code == 200
     assert moved.json()["issue"]["state"] == "In Progress"
     assert fake.moved == [("DAR-80", "In Progress")]
-    audit = audit_log.read_text(encoding="utf-8")
-    assert "linear.issue.move_denied" in audit
-    assert "linear.issue.move" in audit
-    assert "Hank via Yennefer UI" in audit
+    audit = [json.loads(line) for line in audit_log.read_text(encoding="utf-8").splitlines()]
+    denied_audit = next(entry for entry in audit if entry["action"] == "linear.issue.move_denied")
+    move_audit = next(entry for entry in audit if entry["action"] == "linear.issue.move")
+    assert denied_audit["details"]["issue"] == "DAR-80"
+    assert denied_audit["details"]["before_state"] is None
+    assert denied_audit["details"]["after_state"] is None
+    assert denied_audit["details"]["prompt_summary"] == "missing approved_by"
+    assert move_audit["details"]["issue"] == "DAR-80"
+    assert move_audit["details"]["before_state"] == "Todo"
+    assert move_audit["details"]["after_state"] == "In Progress"
+    assert move_audit["details"]["prompt_summary"] == "Selected by zero-ticket loop"
+    assert move_audit["details"]["approved_by"] == "Hank via Yennefer UI"

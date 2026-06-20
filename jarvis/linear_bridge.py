@@ -32,16 +32,19 @@ class NeedsSpecBody(BaseModel):
     description: str
     team: str
     project: str | None = None
+    prompt_summary: str | None = None
 
 
 class CommentBody(BaseModel):
     body: str
+    prompt_summary: str | None = None
 
 
 class StateMoveBody(BaseModel):
     state: str
     approved_by: str | None = None
     reason: str | None = None
+    prompt_summary: str | None = None
 
 
 def create_app(
@@ -146,22 +149,40 @@ def create_app(
             audit_path,
             "linear.issue.create_needs_spec",
             request,
-            {"title": body.title, "team": body.team, "project": body.project, "issue": getattr(issue, "identifier", None)},
+            {
+                "issue": getattr(issue, "identifier", None),
+                "before_state": None,
+                "after_state": getattr(issue, "state", None) or "created",
+                "prompt_summary": body.prompt_summary or _summarize(body.description or body.title),
+                "title": body.title,
+                "team": body.team,
+                "project": body.project,
+            },
         )
         return {"issue": _issue_payload(issue) if issue else None}
 
     @app.post("/linear/issues/{issue_id}/comments")
     async def comment(request: Request, issue_id: str, body: CommentBody):
         authorize(request)
+        before = await _find_active_issue(client, issue_id)
         try:
             await client.comment_on_issue(issue_id, body.body)
         except LinearUnavailable as exc:
             return {"error": str(exc)}
+        after = await _find_active_issue(client, issue_id)
+        before_state = getattr(before, "state", None)
+        after_state = getattr(after, "state", None) or before_state
         _audit(
             audit_path,
             "linear.issue.comment",
             request,
-            {"issue": issue_id, "body_chars": len(body.body)},
+            {
+                "issue": issue_id,
+                "before_state": before_state,
+                "after_state": after_state,
+                "prompt_summary": body.prompt_summary or _summarize(body.body),
+                "body_chars": len(body.body),
+            },
         )
         return {"ok": True}
 
@@ -173,20 +194,33 @@ def create_app(
                 audit_path,
                 "linear.issue.move_denied",
                 request,
-                {"issue": issue_id, "target_state": body.state, "reason": "missing approved_by"},
+                {
+                    "issue": issue_id,
+                    "before_state": None,
+                    "after_state": None,
+                    "target_state": body.state,
+                    "prompt_summary": body.prompt_summary or _summarize(body.reason or "missing approved_by"),
+                    "reason": "missing approved_by",
+                },
             )
             raise HTTPException(status_code=400, detail="approved_by is required for state moves")
+        before = await _find_active_issue(client, issue_id)
         try:
             issue = await client.move_issue_to_state(issue_id, body.state)
         except LinearUnavailable as exc:
             return {"error": str(exc)}
+        before_state = getattr(before, "state", None)
+        after_state = getattr(issue, "state", None) or body.state
         _audit(
             audit_path,
             "linear.issue.move",
             request,
             {
                 "issue": issue_id,
+                "before_state": before_state,
+                "after_state": after_state,
                 "target_state": body.state,
+                "prompt_summary": body.prompt_summary or _summarize(body.reason or body.state),
                 "approved_by": body.approved_by,
                 "reason": body.reason,
                 "result": getattr(issue, "identifier", None),
@@ -218,6 +252,25 @@ def _states_from_param(value: str | None) -> list[str]:
     if not value:
         return []
     return [state.strip() for state in value.split(",") if state.strip()]
+
+
+async def _find_active_issue(client: LinearBoardClient, issue_id: str):
+    try:
+        issues = await client.list_active_issues(list(ACTIVE_STATES))
+    except LinearUnavailable:
+        return None
+    wanted = issue_id.lower()
+    for issue in issues:
+        if issue.identifier.lower() == wanted or issue.id.lower() == wanted:
+            return issue
+    return None
+
+
+def _summarize(value: str, limit: int = 180) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit - 1]}..."
 
 
 def _parse_cutoff(value: str | None) -> datetime:
