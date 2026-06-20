@@ -10,6 +10,7 @@ Run:  python -m jarvis.server     (then open the printed URL)
 """
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -97,8 +98,57 @@ def _history_markdown(include_system: bool = False):
     return "\n".join(lines).strip() + "\n"
 
 
+def _auto_search_args(user_message: str | None, model_message: dict | None):
+    text = (user_message or "").strip()
+    if not text:
+        return None
+    model_text = " ".join(
+        str((model_message or {}).get(key) or "")
+        for key in ("content", "reasoning_content")
+    ).lower()
+    user_text = text.lower()
+    current_fact_hints = (
+        "current",
+        "latest",
+        "today",
+        "yesterday",
+        "recent",
+        "news",
+        "situation",
+        "verify",
+        "source",
+        "sources",
+        "cite",
+        "web",
+        "search",
+        "export-control",
+    )
+    if "web_search" not in model_text and not any(hint in user_text for hint in current_fact_hints):
+        return None
+    return {"query": text, "max_results": 3}
+
+
 def _text(msg):
     return extract_speakable(msg)
+
+
+def _source_urls(result: str, limit: int = 5):
+    urls = []
+    for match in re.findall(r"https?://[^\s)>\"]+", result or ""):
+        url = match.rstrip(".,;:")
+        if url not in urls:
+            urls.append(url)
+        if len(urls) >= limit:
+            break
+    return urls
+
+
+def _with_source_urls(reply: str, result: str):
+    urls = _source_urls(result)
+    if not urls or any(url in (reply or "") for url in urls):
+        return reply
+    source_block = "\n".join(f"- {url}" for url in urls)
+    return f"{(reply or 'I retrieved current evidence.').rstrip()}\n\nSources:\n{source_block}"
 
 
 async def _complete(messages, with_tools=True, max_tokens=None):
@@ -131,6 +181,8 @@ async def _summarise_action(name, args, result, speak):
         "the claim.)"}]
     try:
         reply = _text(await _complete(follow, with_tools=False, max_tokens=512)) or "Done."
+        if name in {"web_search", "fetch_url"}:
+            reply = _with_source_urls(reply, result)
     except Exception as exc:
         excerpt = (result or "(no output)").strip()[:1200]
         reply = (
@@ -240,6 +292,13 @@ async def chat(body: ChatIn):
             return JSONResponse({"reply": reply, "actions": actions})
         return JSONResponse({"reply": f"That one needs your go-ahead. Shall I run {name}?",
                              "pending": {"name": name, "args": args}, "actions": actions})
+
+    auto_search = _auto_search_args(body.message, msg)
+    if auto_search:
+        result = await tools.execute("web_search", auto_search, CONFIG)
+        actions.append({"tool": "web_search", "args": auto_search, "result": result[:1500]})
+        reply = await _summarise_action("web_search", auto_search, result, body.speak)
+        return JSONResponse({"reply": reply, "actions": actions})
 
     reply = _text(msg) or "..."
     HISTORY.append({"role": "assistant", "content": reply})
