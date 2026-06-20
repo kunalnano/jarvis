@@ -92,6 +92,95 @@ async def run_shell(args, _cfg):
     return await _run(cmd, timeout=120)
 
 
+# ---- DAR-128: skill dispatch ------------------------------------------
+# Yennefer runs curated DVC Claude Code skills via `claude -p "/<id>"`.
+# The registry is code-level so it works regardless of which YAML config is
+# loaded; per-skill overrides (command/cwd/timeout/aliases) may be supplied in
+# config 'skills', and any directory under ~/.claude/skills is also runnable.
+
+DEFAULT_SKILLS = {
+    "dvc-eod-done-sweep": {
+        "aliases": ["done sweep", "run the done sweep", "eod sweep",
+                    "end of day sweep", "validate the done lane"],
+    },
+    "twitter-bookmark-review": {
+        "aliases": ["bookmark review", "bookmark pipeline",
+                    "process my bookmarks", "run my twitter bookmark review"],
+    },
+    "chat-vault-pipeline": {
+        "aliases": ["chat ingestion", "ingest my chats", "vault ingest",
+                    "run the chat ingestion pipeline"],
+    },
+    "meeting-prep": {
+        "aliases": ["meeting prep", "prep my meeting", "prep my next meeting",
+                    "get me ready for my meeting"],
+    },
+}
+
+
+def _skill_table(cfg) -> dict:
+    """Built-in skills + ~/.claude/skills dirs + config 'skills' overrides.
+
+    Config entries win on conflict so a skill can be re-pointed or given a
+    custom command/cwd/timeout without code changes."""
+    table = {k: dict(v) for k, v in DEFAULT_SKILLS.items()}
+    skills_dir = Path.home() / ".claude" / "skills"
+    if skills_dir.is_dir():
+        for child in skills_dir.iterdir():
+            if child.is_dir() and not child.name.startswith("."):
+                table.setdefault(child.name, {"aliases": []})
+    for name, spec in ((cfg or {}).get("skills", {}) or {}).items():
+        entry = table.get(name, {})
+        if isinstance(spec, dict):
+            entry.update(spec)
+        else:
+            entry["command"] = str(spec)
+        table[name] = entry
+    return table
+
+
+def _resolve_skill(raw: str, table: dict) -> str | None:
+    """Map a raw id or freeform phrase to a known skill id, else None."""
+    q = (raw or "").strip().lstrip("/").strip().lower()
+    if not q:
+        return None
+    for name in table:                       # exact id (case-insensitive)
+        if name.lower() == q:
+            return name
+    for name, entry in table.items():        # exact alias
+        if any(a.lower() == q for a in entry.get("aliases", [])):
+            return name
+    for name, entry in table.items():        # fuzzy alias containment
+        if any(a.lower() in q or q in a.lower() for a in entry.get("aliases", [])):
+            return name
+    return None
+
+
+def _skill_command(name: str, entry: dict, extra: str) -> str:
+    """Shell command for a skill. Default drives it through Claude Code
+    headless: claude -p "/<id> <extra>". A config 'command' overrides."""
+    if entry.get("command"):
+        base = str(entry["command"])
+        return f"{base} {extra}".strip() if extra else base
+    slash = f"/{name}" + (f" {extra}" if extra else "")
+    return f"claude -p {shlex.quote(slash)}"
+
+
+async def run_skill(args, cfg):
+    raw = str(args.get("skill") or args.get("name") or "").strip()
+    extra = str(args.get("args", "")).strip()
+    table = _skill_table(cfg)
+    name = _resolve_skill(raw, table)
+    if not name:
+        known = ", ".join(sorted(table)) or "(none)"
+        return f"I don't have a skill called '{raw}'. I can run: {known}."
+    entry = table[name]
+    cwd = _expand(entry["cwd"]) if entry.get("cwd") else str(Path.home())
+    timeout = float(entry.get("timeout", 900))
+    out = await _run(_skill_command(name, entry, extra), timeout=timeout, cwd=cwd)
+    return f"[{name}] {out}"
+
+
 # ---- registry ----------------------------------------------------------
 # safe=True -> auto-runs.  safe=False -> requires explicit user confirmation.
 
@@ -114,6 +203,9 @@ REGISTRY = {
     "run_agent": {"handler": run_agent, "safe": False,
         "description": "Invoke a registered agent/script by name (names defined in config 'agents'). Side-effectful; the user confirms first.",
         "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "args": {"type": "string", "description": "optional extra arguments"}}, "required": ["name"]}},
+    "run_skill": {"handler": run_skill, "safe": False,
+        "description": "Run one of Yennefer's curated DVC skills by id or phrase via Claude Code (e.g. skill='dvc-eod-done-sweep' for 'run the done sweep'; 'bookmark review' -> twitter-bookmark-review). Side-effectful; the user confirms first. Unknown skills are reported back, never invented.",
+        "parameters": {"type": "object", "properties": {"skill": {"type": "string", "description": "Skill id or freeform phrase, e.g. 'dvc-eod-done-sweep' or 'run the done sweep'"}, "args": {"type": "string", "description": "optional extra arguments passed to the skill"}}, "required": ["skill"]}},
     "run_shell": {"handler": run_shell, "safe": False,
         "description": "Run an arbitrary shell command on the Mac. Only when no specific tool fits. Always confirmed by the user first.",
         "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
