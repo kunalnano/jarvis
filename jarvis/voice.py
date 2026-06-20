@@ -56,6 +56,11 @@ def clean_for_speech(text: str) -> str:
     return text.strip()
 
 
+def _applescript_string(s: str) -> str:
+    """Quote/escape a Python string for safe interpolation into AppleScript."""
+    return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
 class Voice:
     """Multi-backend TTS - ElevenLabs or macOS native."""
 
@@ -103,6 +108,9 @@ class Voice:
         # Usage tracking
         self.characters_used_session = 0
         self.subscription_info = None
+
+        # DAR-130: last desktop cue (cleaned text, monotonic ts) for dedupe.
+        self._last_cue = ("", 0.0)
 
     async def initialize(self):
         """Initialize TTS engine."""
@@ -311,10 +319,51 @@ class Voice:
         self.engine = 'macos'
         console.print(f"[green]✓[/green] macOS TTS ready (voice: {self.macos_voice})")
 
+    async def _emit_speech_cue(self, text: str):
+        """DAR-130: fire a desktop notification for every spoken utterance.
+
+        This sits at the single speech chokepoint, so all engines
+        (elevenlabs/chatterbox/kokoro/macos) are covered. Fail-soft and
+        non-blocking: a cue failure must never delay or break speech. Touches
+        no governor state in ~/.yennefer/state.json.
+        """
+        try:
+            import time
+            msg = clean_for_speech(text)
+            if not msg:
+                return
+            # Dedupe: skip an identical cue within 5s so a playbook hand-up that
+            # is also spoken aloud does not double-notify for one utterance.
+            now = time.monotonic()
+            last_text, last_ts = self._last_cue
+            if msg == last_text and (now - last_ts) < 5.0:
+                return
+            self._last_cue = (msg, now)
+            banner = (msg[:137] + '...') if len(msg) > 140 else msg
+
+            def _post():
+                try:
+                    subprocess.run(
+                        ["osascript", "-e",
+                         f'display notification {_applescript_string(banner)} '
+                         f'with title "Yennefer"'],
+                        check=False, capture_output=True, timeout=5,
+                    )
+                except Exception:
+                    pass
+
+            await asyncio.get_event_loop().run_in_executor(None, _post)
+        except Exception:
+            # Never let a notification failure affect speech.
+            pass
+
     async def speak(self, text: str):
         """Generate and play speech."""
         if not text:
             return
+
+        # DAR-130: every utterance emits a desktop notification cue (all engines).
+        await self._emit_speech_cue(text)
 
         console.print(f"[magenta]Yennefer:[/magenta] {text}")
 
