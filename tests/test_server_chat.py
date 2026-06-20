@@ -70,3 +70,25 @@ def test_chat_auto_searches_when_model_misses_tool_call(monkeypatch):
 
 def test_auto_search_args_ignore_ordinary_prompts():
     assert server._auto_search_args("Tell me a joke.", {"content": "Fine.", "tool_calls": []}) is None
+
+
+def test_retrieval_summary_replaces_empty_done_reply():
+    result = (
+        "Search results for: Anthropic Fable 5 export control situation\n"
+        "1. Anthropic statement\n"
+        "   URL: https://anthropic.example/news\n"
+        "   Snippet: The US government issued an export control directive.\n"
+        "2. Legal analysis\n"
+        "   URL: https://law.example/fable\n"
+        "   Snippet: The directive suspended access to Fable 5 and Mythos 5.\n"
+    )
+
+    reply = server._with_source_urls(
+        server._retrieval_summary("Done.", result),
+        result,
+    )
+
+    assert "I retrieved current web evidence." in reply
+    assert "export control directive" in reply
+    assert "suspended access to Fable 5 and Mythos 5" in reply
+    assert "https://anthropic.example/news" in reply

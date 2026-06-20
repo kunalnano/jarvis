@@ -151,6 +151,29 @@ def _with_source_urls(reply: str, result: str):
     return f"{(reply or 'I retrieved current evidence.').rstrip()}\n\nSources:\n{source_block}"
 
 
+def _retrieval_summary(reply: str, result: str):
+    text = (reply or "").strip()
+    if text and text.lower() not in {"done", "done."}:
+        return reply
+
+    snippets = [
+        line.split("Snippet:", 1)[1].strip()
+        for line in (result or "").splitlines()
+        if "Snippet:" in line
+    ]
+    if snippets:
+        return "I retrieved current web evidence. " + " ".join(snippets[:2])
+
+    excerpt = ""
+    if "Fetched excerpts:" in (result or ""):
+        excerpt = result.split("Fetched excerpts:", 1)[1].strip()
+    excerpt = re.sub(r"\s+", " ", excerpt).strip()
+    if excerpt:
+        return f"I retrieved current web evidence. {excerpt[:500]}"
+
+    return reply or "I retrieved current web evidence."
+
+
 async def _complete(messages, with_tools=True, max_tokens=None):
     payload = {"model": BRAIN.model, "messages": messages,
                "temperature": BRAIN.temperature,
@@ -182,6 +205,7 @@ async def _summarise_action(name, args, result, speak):
     try:
         reply = _text(await _complete(follow, with_tools=False, max_tokens=512)) or "Done."
         if name in {"web_search", "fetch_url"}:
+            reply = _retrieval_summary(reply, result)
             reply = _with_source_urls(reply, result)
     except Exception as exc:
         excerpt = (result or "(no output)").strip()[:1200]
