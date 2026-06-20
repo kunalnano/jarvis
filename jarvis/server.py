@@ -176,6 +176,15 @@ def _retrieval_summary(reply: str, result: str):
     return reply or "I retrieved current web evidence."
 
 
+def _direct_tool_summary(name: str, reply: str, result: str):
+    text = (reply or "").strip()
+    if text and text.lower() not in {"done", "done."}:
+        return reply
+    if name in {"linear_counts", "linear_comment", "linear_move_issue", "screen_context"}:
+        return (result or "Done.").strip()
+    return reply or "Done."
+
+
 async def _complete(messages, with_tools=True, max_tokens=None):
     payload = {"model": BRAIN.model, "messages": messages,
                "temperature": BRAIN.temperature,
@@ -209,6 +218,8 @@ async def _summarise_action(name, args, result, speak):
         if name in {"web_search", "fetch_url"}:
             reply = _retrieval_summary(reply, result)
             reply = _with_source_urls(reply, result)
+        else:
+            reply = _direct_tool_summary(name, reply, result)
     except Exception as exc:
         excerpt = (result or "(no output)").strip()[:1200]
         reply = (

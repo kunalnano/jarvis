@@ -92,3 +92,19 @@ def test_retrieval_summary_replaces_empty_done_reply():
     assert "export control directive" in reply
     assert "suspended access to Fable 5 and Mythos 5" in reply
     assert "https://anthropic.example/news" in reply
+
+
+def test_direct_tool_summary_replaces_empty_done_reply():
+    linear = server._direct_tool_summary(
+        "linear_counts",
+        "Done.",
+        "Linear active issue counts (scope: states=Todo; active_only=True): Todo: 39",
+    )
+    screen = server._direct_tool_summary(
+        "screen_context",
+        "Done.",
+        "Current screen context:\n- Front app: Ghostty\n- Screenshot saved: /tmp/screen.png",
+    )
+
+    assert "Todo: 39" in linear
+    assert "Screenshot saved: /tmp/screen.png" in screen

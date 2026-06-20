@@ -454,7 +454,7 @@ async def screen_context(args, _cfg):
             "-e",
             'return frontApp & "\n" & windowTitle',
         ],
-        timeout=10,
+        timeout=30,
     )
     lines = [line.strip() for line in front.splitlines() if line.strip()]
     app_name = lines[0] if lines else "unknown"
@@ -465,7 +465,7 @@ async def screen_context(args, _cfg):
         directory = Path(_expand(str(args.get("directory") or "~/.yennefer/screenshots")))
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"screen-{datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
-        capture = await _run(["screencapture", "-x", str(path)], timeout=15)
+        capture = await _run(["screencapture", "-x", str(path)], timeout=30)
         if path.exists():
             size = path.stat().st_size
             screenshot_line = f"Screenshot saved: {path} ({size} bytes)."
