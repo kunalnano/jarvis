@@ -10,11 +10,12 @@ Run:  python -m jarvis.server     (then open the printed URL)
 """
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from .brain import Brain, YENNEFER_SYSTEM_PROMPT, extract_speakable
@@ -40,6 +41,7 @@ SYSTEM = (
     "source, say you cannot verify it yet instead of guessing. Keep replies short."
 )
 
+SESSION_STARTED_AT = datetime.now(timezone.utc)
 HISTORY = [{"role": "system", "content": SYSTEM}]
 app = FastAPI(title="Yennefer")
 
@@ -53,6 +55,46 @@ class ChatIn(BaseModel):
 
 def _convo():
     return [m for m in HISTORY if m["role"] in ("system", "user", "assistant")]
+
+
+def _reset_history():
+    global HISTORY, SESSION_STARTED_AT
+    SESSION_STARTED_AT = datetime.now(timezone.utc)
+    HISTORY = [{"role": "system", "content": SYSTEM}]
+
+
+def _history_messages(include_system: bool = False):
+    return [
+        {"role": m["role"], "content": m["content"]}
+        for m in HISTORY
+        if include_system or m["role"] != "system"
+    ]
+
+
+def _history_payload(include_system: bool = False):
+    messages = _history_messages(include_system)
+    return {
+        "retention": "memory-only",
+        "session_started_at": SESSION_STARTED_AT.isoformat(),
+        "message_count": len(messages),
+        "messages": messages,
+    }
+
+
+def _history_markdown(include_system: bool = False):
+    exported_at = datetime.now(timezone.utc).isoformat()
+    lines = [
+        "# Yennefer Chat History",
+        "",
+        f"- Exported: {exported_at}",
+        f"- Session started: {SESSION_STARTED_AT.isoformat()}",
+        f"- Retention: memory-only",
+        "",
+    ]
+    for msg in _history_messages(include_system):
+        role = msg["role"].title()
+        lines.extend([f"## {role}", "", msg["content"].strip() or "(empty)", ""])
+    return "\n".join(lines).strip() + "\n"
 
 
 def _text(msg):
@@ -119,6 +161,30 @@ install_shortcuts_routes(app, CONFIG, _ask_for_shortcuts, PLAYBOOKS)
 @app.get("/", response_class=HTMLResponse)
 async def index():
     return (WEB / "chat.html").read_text(encoding="utf-8")
+
+
+@app.get("/api/history")
+async def history(include_system: bool = False):
+    return JSONResponse(_history_payload(include_system))
+
+
+@app.get("/api/history/export", response_class=PlainTextResponse)
+async def export_history(include_system: bool = False):
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    headers = {
+        "Content-Disposition": f'attachment; filename="yennefer-chat-{timestamp}.md"'
+    }
+    return PlainTextResponse(
+        _history_markdown(include_system),
+        media_type="text/markdown; charset=utf-8",
+        headers=headers,
+    )
+
+
+@app.post("/api/history/clear")
+async def clear_history():
+    _reset_history()
+    return JSONResponse(_history_payload())
 
 
 @app.post("/api/chat")

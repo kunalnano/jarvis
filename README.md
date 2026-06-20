@@ -298,6 +298,11 @@ ELEVENLABS_VOICE_ID=your_voice_id     # From your Voice Library
 
 </div>
 
+Web chat history is memory-only for the running server session. The web UI can
+export the current transcript as Markdown through `/api/history/export`, and
+clear the active server-side transcript through `/api/history/clear`. Restarting
+the server also starts a fresh web chat history.
+
 > 💡 **Pro tip:** On Windows, press `Win+H` for system-level voice dictation.
 
 <!-- Animated Divider -->

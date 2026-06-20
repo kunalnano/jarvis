@@ -19,8 +19,12 @@
       background:linear-gradient(90deg,#c9a9ff,var(--accent)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
   .sub{ color:var(--muted); font-size:12px; }
   .spacer{ flex:1; }
+  .header-actions{ display:flex; align-items:center; gap:8px; }
   .toggle{ display:flex; align-items:center; gap:7px; color:var(--muted); font-size:12px; cursor:pointer; user-select:none; }
   .toggle input{ accent-color:var(--accent); }
+  .utility{ background:#2a2140; border:1px solid var(--line); color:var(--txt); padding:7px 10px; border-radius:8px; font-size:12px; }
+  .utility:hover{ border-color:var(--accent2); }
+  .utility:disabled{ opacity:.5; cursor:default; }
   #log{ flex:1; overflow-y:auto; padding:24px 20px; display:flex; flex-direction:column; gap:14px; }
   .msg{ max-width:78%; padding:11px 15px; border-radius:16px; white-space:pre-wrap; word-wrap:break-word; }
   .msg.user{ align-self:flex-end; background:var(--user); border:1px solid var(--line); border-bottom-right-radius:5px; }
@@ -56,7 +60,11 @@
     <div class="dot" id="status"></div>
     <div><h1>Yennefer</h1><div class="sub">local presence · qwen · on your Mac</div></div>
     <div class="spacer"></div>
-    <label class="toggle"><input type="checkbox" id="voice"> speak replies</label>
+    <div class="header-actions">
+      <button class="utility" id="export">Export</button>
+      <button class="utility" id="clear">Clear</button>
+      <label class="toggle"><input type="checkbox" id="voice"> speak replies</label>
+    </div>
   </header>
   <div id="log"></div>
   <footer>
@@ -70,6 +78,9 @@ const log = document.getElementById('log');
 const box = document.getElementById('box');
 const sendBtn = document.getElementById('send');
 const voice = document.getElementById('voice');
+const exportBtn = document.getElementById('export');
+const clearBtn = document.getElementById('clear');
+const intro = "I'm here. Ask me something, or tell me to do something — check status, open an app, look at a repo, run one of your agents.";
 
 function el(cls, html){ const d=document.createElement('div'); d.className=cls; if(html!==undefined) d.innerHTML=html; return d; }
 function esc(s){ return (s||'').replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
@@ -79,6 +90,11 @@ function bubble(who, text){
   const wrap = el('msg ' + (who==='you'?'user':'yenn'));
   const lbl = el('who' + (who==='you'?'':' y')); lbl.textContent = who==='you'?'You':'Yennefer';
   log.appendChild(lbl); wrap.textContent = text; log.appendChild(wrap); scroll();
+}
+function renderHistory(messages){
+  log.innerHTML = '';
+  if(!messages || !messages.length){ bubble('yenn', intro); return; }
+  messages.forEach(m=>bubble(m.role==='user'?'you':'yenn', m.content || ''));
 }
 function actionCard(a){
   const c = el('action');
@@ -101,6 +117,50 @@ async function post(payload){
     if(d.pending) confirmCard(d.pending);
   }catch(e){ unthink(); bubble('yenn','(I lost the connection to my backend.)'); }
 }
+async function hydrateHistory(){
+  try{
+    const r = await fetch('/api/history');
+    const d = await r.json();
+    renderHistory(d.messages || []);
+  }catch(e){
+    renderHistory([]);
+  }
+}
+async function exportHistory(){
+  exportBtn.disabled = true;
+  try{
+    const r = await fetch('/api/history/export');
+    if(!r.ok) throw new Error('export failed');
+    const blob = await r.blob();
+    const disposition = r.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    const filename = match ? match[1] : 'yennefer-chat.md';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    URL.revokeObjectURL(a.href);
+    a.remove();
+  }catch(e){
+    bubble('yenn', '(I could not export the chat history.)');
+  }finally{
+    exportBtn.disabled = false;
+  }
+}
+async function clearHistory(){
+  if(!confirm('Clear this Yennefer session history?')) return;
+  clearBtn.disabled = true;
+  try{
+    const r = await fetch('/api/history/clear',{method:'POST'});
+    if(!r.ok) throw new Error('clear failed');
+    renderHistory([]);
+  }catch(e){
+    bubble('yenn', '(I could not clear the chat history.)');
+  }finally{
+    clearBtn.disabled = false;
+  }
+}
 function confirmCard(p){
   const c = el('confirm');
   c.innerHTML = 'Run <code>'+esc(p.name)+'('+esc(JSON.stringify(p.args||{}))+')</code>?';
@@ -115,9 +175,11 @@ function send(){
   post({message:t, speak:voice.checked});
 }
 sendBtn.onclick = send;
+exportBtn.onclick = exportHistory;
+clearBtn.onclick = clearHistory;
 box.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } });
 box.addEventListener('input', ()=>{ box.style.height='auto'; box.style.height=Math.min(box.scrollHeight,140)+'px'; });
-bubble('yenn', "I'm here. Ask me something, or tell me to do something — check status, open an app, look at a repo, run one of your agents.");
+hydrateHistory();
 box.focus();
 </script>
 </body>
