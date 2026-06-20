@@ -83,6 +83,15 @@ class FakeNotifier:
         return {"ok": True, "output": "notified"}
 
 
+class FakeFailNotifier:
+    def __init__(self):
+        self.messages = []
+
+    async def notify(self, text):
+        self.messages.append(text)
+        return {"ok": False, "error": "sandboxed notifier unavailable"}
+
+
 def make_engine(tmp_path, fake, notifier=None):
     tmp_path.mkdir(parents=True, exist_ok=True)
     vault_path = tmp_path / "Yennefer Playbooks.md"
@@ -634,3 +643,46 @@ def test_zero_ticket_retry_policy_locks_out_repeated_failures():
     assert retry["next_attempt"] == 2
     assert lockout["decision"] == "lockout"
     assert "Lock out this action" in lockout["next_action"]
+
+
+def test_zero_ticket_daemon_does_not_write_linear_by_default(tmp_path):
+    class LinearWithCommentSpy(FakeLinear):
+        def __init__(self):
+            super().__init__()
+            self.comments = []
+
+        async def comment_on_issue(self, issue_id, body):
+            self.comments.append((issue_id, body))
+
+    issue = LinearIssue(
+        id="issue-119",
+        identifier="DAR-119",
+        title="Zero-ticket loop escalation + handoff bridge",
+        state="In Progress",
+        priority=1,
+        project="Yennefer",
+    )
+    packet = build_zero_ticket_escalation_packet(
+        issue,
+        active_count=41,
+        evidence_checked=["Yennefer daemon sandbox"],
+        evidence_found=["Daemon lacks Linear credentials"],
+        decision_requested="Use Codex/Linear MCP or a trusted bridge for Linear comments.",
+        next_action="Loop runner records Linear evidence after Yennefer notifies.",
+        forbidden_actions=["Do not write Linear from the sandboxed daemon by default"],
+        created_at=NOW,
+    )
+    fake = LinearWithCommentSpy()
+    engine = make_engine(tmp_path, fake, notifier=FakeFailNotifier())
+
+    result = asyncio.run(engine.route_zero_ticket_packet(packet))
+    state = load_state(engine)
+    text = open(result["packet_path"], encoding="utf-8").read()
+
+    assert result["notification"]["ok"] is False
+    assert result["linear_comment"]["skipped"] == "daemon_sandbox_default"
+    assert result["linear_comment"]["owner"] == "loop_runner_or_trusted_bridge"
+    assert fake.comments == []
+    assert state["zero_ticket_loop"]["linear_comment"]["skipped"] == "daemon_sandbox_default"
+    assert "linear_write_owner: loop_runner_or_trusted_bridge" in text
+    assert "The Yennefer daemon may run sandboxed without Linear access" in text

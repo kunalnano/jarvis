@@ -73,6 +73,15 @@ ZERO_TICKET_DEFAULT_RETRY_POLICY = {
         "failure evidence and the next concrete action."
     ),
 }
+ZERO_TICKET_DEFAULT_ROUTING = {
+    "yennefer_daemon": "packet_and_notification_only",
+    "linear_write_owner": "loop_runner_or_trusted_bridge",
+    "reason": (
+        "The Yennefer daemon may run sandboxed without Linear access. Linear "
+        "comments and state changes must be written by the loop runner or an "
+        "explicitly provisioned bridge."
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -981,7 +990,7 @@ class PlaybookEngine:
         self,
         packet: dict,
         *,
-        comment_issue_on_notify_failure: bool = True,
+        comment_issue_on_notify_failure: bool = False,
     ) -> dict:
         """Route a zero-ticket packet through Yennefer's handoff and notify path."""
 
@@ -990,6 +999,7 @@ class PlaybookEngine:
         packet.setdefault("created_at", isoformat(now))
         packet.setdefault("notification_channels", zero_ticket_notification_channels())
         packet.setdefault("retry_policy", ZERO_TICKET_DEFAULT_RETRY_POLICY)
+        packet.setdefault("routing", ZERO_TICKET_DEFAULT_ROUTING)
 
         path = self._write_zero_ticket_packet(packet, now)
         notification = await self.notifier.notify(_zero_ticket_notification_text(packet, path))
@@ -1015,6 +1025,12 @@ class PlaybookEngine:
                 linear_comment = {"ok": True}
             except LinearUnavailable as exc:
                 linear_comment = {"ok": False, "error": str(exc)}
+        elif not comment_issue_on_notify_failure:
+            linear_comment = {
+                "ok": False,
+                "skipped": "daemon_sandbox_default",
+                "owner": "loop_runner_or_trusted_bridge",
+            }
 
         data["zero_ticket_loop"] = {
             "status": "routed",
@@ -1097,6 +1113,7 @@ def build_zero_ticket_escalation_packet(
         },
         "stop_gates": ZERO_TICKET_DEFAULT_STOP_GATES,
         "retry_policy": ZERO_TICKET_DEFAULT_RETRY_POLICY,
+        "routing": ZERO_TICKET_DEFAULT_ROUTING,
         "notification_channels": zero_ticket_notification_channels(),
     }
 
@@ -1149,6 +1166,7 @@ def build_zero_ticket_continuation_packet(
         },
         "stop_gates": ZERO_TICKET_DEFAULT_STOP_GATES,
         "retry_policy": ZERO_TICKET_DEFAULT_RETRY_POLICY,
+        "routing": ZERO_TICKET_DEFAULT_ROUTING,
         "handoff_recommendation": recommendation,
         "successor_prompt": (
             "Continue the Linear zero-ticket loop from this packet. Recount active "
@@ -1272,6 +1290,9 @@ def _format_zero_ticket_escalation(packet: dict) -> str:
         "Retry/lockout policy:",
         *_bullets(_retry_policy_lines(packet.get("retry_policy"))),
         "",
+        "Routing boundary:",
+        *_bullets(_routing_lines(packet.get("routing"))),
+        "",
         "Notification routing:",
         *_bullets(_channel_lines(packet.get("notification_channels"))),
     ]
@@ -1328,6 +1349,9 @@ def _format_zero_ticket_continuation(packet: dict) -> str:
         "",
         "Retry/lockout policy:",
         *_bullets(_retry_policy_lines(packet.get("retry_policy"))),
+        "",
+        "Routing boundary:",
+        *_bullets(_routing_lines(packet.get("routing"))),
         "",
         "Successor-agent handoff:",
         f"- Recommendation: {packet.get('handoff_recommendation') or '(none)'}",
@@ -1416,6 +1440,11 @@ def _stop_gate_lines(stop_gates: dict | None) -> list[str]:
 
 def _retry_policy_lines(retry_policy: dict | None) -> list[str]:
     policy = retry_policy or ZERO_TICKET_DEFAULT_RETRY_POLICY
+    return [f"{key}: {value}" for key, value in policy.items()]
+
+
+def _routing_lines(routing: dict | None) -> list[str]:
+    policy = routing or ZERO_TICKET_DEFAULT_ROUTING
     return [f"{key}: {value}" for key, value in policy.items()]
 
 
