@@ -39,7 +39,9 @@ SYSTEM = (
     "something, call the right tool instead of describing how. If nothing fits, just "
     "answer. For current events or external facts that could have changed, use "
     "web_search or fetch_url before making a claim. If you have not retrieved a "
-    "source, say you cannot verify it yet instead of guessing. Keep replies short."
+    "source, say you cannot verify it yet instead of guessing. Use linear_counts "
+    "for scoped Linear ticket counts, and use screen_context before making claims "
+    "about the current visible screen. Keep replies short."
 )
 
 SESSION_STARTED_AT = datetime.now(timezone.utc)
