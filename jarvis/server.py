@@ -35,7 +35,9 @@ SYSTEM = (
     + "\n\nYou have hands: tools to act on the user's Mac (check status, open apps or "
     "URLs, inspect repos, run registered agents). When the user asks you to DO "
     "something, call the right tool instead of describing how. If nothing fits, just "
-    "answer. Keep replies short."
+    "answer. For current events or external facts that could have changed, use "
+    "web_search or fetch_url before making a claim. If you have not retrieved a "
+    "source, say you cannot verify it yet instead of guessing. Keep replies short."
 )
 
 HISTORY = [{"role": "system", "content": SYSTEM}]
@@ -57,9 +59,11 @@ def _text(msg):
     return extract_speakable(msg)
 
 
-async def _complete(messages, with_tools=True):
+async def _complete(messages, with_tools=True, max_tokens=None):
     payload = {"model": BRAIN.model, "messages": messages,
-               "temperature": BRAIN.temperature, "max_tokens": BRAIN.max_tokens, "stream": False}
+               "temperature": BRAIN.temperature,
+               "max_tokens": max_tokens or BRAIN.max_tokens,
+               "stream": False}
     if with_tools:
         payload["tools"] = tools.openai_tools()
         payload["tool_choice"] = "auto"
@@ -79,8 +83,18 @@ async def _ask_for_shortcuts(question: str) -> str:
 
 async def _summarise_action(name, args, result, speak):
     follow = _convo() + [{"role": "user", "content":
-        f"(You ran {name}({json.dumps(args)}). Result:\n{result[:1500]}\nSummarise for the user, briefly and in character.)"}]
-    reply = _text(await _complete(follow, with_tools=False)) or "Done."
+        f"(You ran {name}({json.dumps(args)}). Result:\n{result[:4000]}\n"
+        "Summarise for the user in 120 words or fewer. Include source URLs when "
+        "the result contains them, and hedge clearly if the result did not verify "
+        "the claim.)"}]
+    try:
+        reply = _text(await _complete(follow, with_tools=False, max_tokens=512)) or "Done."
+    except Exception as exc:
+        excerpt = (result or "(no output)").strip()[:1200]
+        reply = (
+            f"I ran {name}, but the local model timed out while summarising it "
+            f"({type(exc).__name__}). Here is the retrieved evidence excerpt:\n\n{excerpt}"
+        )
     HISTORY.append({"role": "assistant", "content": reply})
     if speak:
         await VOICE.speak(reply)
