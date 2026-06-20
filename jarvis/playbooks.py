@@ -57,6 +57,23 @@ DECLINE_PHRASES = (
     "no go ahead",
 )
 
+ZERO_TICKET_PACKET_VERSION = "zero-ticket-loop.v1"
+ZERO_TICKET_DEFAULT_STOP_GATES = {
+    "external_customer_facing": "approval_required",
+    "credentials_access": "approval_required",
+    "production_destructive": "approval_required",
+    "human_judgment": "escalate",
+    "context_token_runtime": "handoff_or_renew",
+}
+ZERO_TICKET_DEFAULT_RETRY_POLICY = {
+    "transient_attempts": 2,
+    "lockout_after_failures": 3,
+    "lockout_action": (
+        "Do not call the failing action again in this run; escalate with exact "
+        "failure evidence and the next concrete action."
+    ),
+}
+
 
 @dataclass(frozen=True)
 class Playbook:
@@ -959,6 +976,494 @@ class PlaybookEngine:
             "playbook_id": hand_up.get("playbook_id"),
             **result,
         }
+
+    async def route_zero_ticket_packet(
+        self,
+        packet: dict,
+        *,
+        comment_issue_on_notify_failure: bool = True,
+    ) -> dict:
+        """Route a zero-ticket packet through Yennefer's handoff and notify path."""
+
+        now = self.now_fn()
+        packet = dict(packet)
+        packet.setdefault("created_at", isoformat(now))
+        packet.setdefault("notification_channels", zero_ticket_notification_channels())
+        packet.setdefault("retry_policy", ZERO_TICKET_DEFAULT_RETRY_POLICY)
+
+        path = self._write_zero_ticket_packet(packet, now)
+        notification = await self.notifier.notify(_zero_ticket_notification_text(packet, path))
+
+        data = self.state.load()
+        hand_up = None
+        if packet.get("kind") == "escalation" or packet.get("decision_requested"):
+            hand_up = _zero_ticket_hand_up(packet, path, now)
+            data["active"] = hand_up
+            data["hand_up"] = _overlay_hand_up(hand_up)
+
+        linear_comment = {"ok": False, "skipped": "not requested"}
+        if (
+            comment_issue_on_notify_failure
+            and not notification.get("ok")
+            and _zero_ticket_comment_issue_id(packet)
+        ):
+            try:
+                await self.client.comment_on_issue(
+                    _zero_ticket_comment_issue_id(packet),
+                    format_zero_ticket_linear_comment(packet, path, notification),
+                )
+                linear_comment = {"ok": True}
+            except LinearUnavailable as exc:
+                linear_comment = {"ok": False, "error": str(exc)}
+
+        data["zero_ticket_loop"] = {
+            "status": "routed",
+            "kind": packet.get("kind"),
+            "packet_path": str(path),
+            "ticket": packet.get("ticket") or {},
+            "notification": notification,
+            "linear_comment": linear_comment,
+            "routed_at": isoformat(now),
+        }
+        data.setdefault("events", []).append({
+            "ts": isoformat(now),
+            "playbook_id": "ZTL",
+            "event": "zero_ticket_packet_routed",
+            "kind": packet.get("kind"),
+            "packet_path": str(path),
+            "notified": bool(notification.get("ok")),
+        })
+        self.state.save(data)
+        return {
+            "status": "routed",
+            "kind": packet.get("kind"),
+            "packet_path": str(path),
+            "notification": notification,
+            "linear_comment": linear_comment,
+            "hand_up": bool(hand_up),
+        }
+
+    def _write_zero_ticket_packet(self, packet: dict, now: datetime) -> Path:
+        self.handoff_dir.mkdir(parents=True, exist_ok=True)
+        ticket = packet.get("ticket") or {}
+        identifier = str(ticket.get("identifier") or ticket.get("id") or "loop")
+        kind = str(packet.get("kind") or "packet")
+        safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", identifier)
+        safe_kind = re.sub(r"[^A-Za-z0-9_.-]+", "-", kind)
+        path = (
+            self.handoff_dir
+            / f"{isoformat(now).replace(':', '').replace('Z', '')}-{safe_id}-zero-ticket-{safe_kind}.md"
+        )
+        path.write_text(format_zero_ticket_packet(packet), encoding="utf-8")
+        return path
+
+
+def build_zero_ticket_escalation_packet(
+    ticket: LinearIssue | dict,
+    *,
+    active_count: int,
+    evidence_checked: list[str] | tuple[str, ...],
+    evidence_found: list[str] | tuple[str, ...],
+    decision_requested: str,
+    next_action: str,
+    blocker: str = "",
+    last_action: str = "",
+    forbidden_actions: list[str] | tuple[str, ...] = (),
+    links: list[str] | tuple[str, ...] = (),
+    created_at: datetime | str | None = None,
+) -> dict:
+    ticket_packet = _coerce_ticket_packet(ticket)
+    return {
+        "version": ZERO_TICKET_PACKET_VERSION,
+        "kind": "escalation",
+        "created_at": _packet_ts(created_at),
+        "ticket": ticket_packet,
+        "project": ticket_packet.get("project") or "",
+        "current_state": ticket_packet.get("state") or "",
+        "active_count": active_count,
+        "movement_count": None,
+        "last_action": last_action,
+        "blocker": blocker,
+        "evidence": {
+            "checked": _packet_items(evidence_checked),
+            "found": _packet_items(evidence_found),
+            "links": _packet_items(links),
+        },
+        "decision_requested": decision_requested,
+        "next_action": {
+            "concrete": next_action,
+            "allowed_actions": ["Wait for Hank/Al decision", "Record the answer in Linear"],
+            "forbidden_actions": _packet_items(forbidden_actions),
+        },
+        "stop_gates": ZERO_TICKET_DEFAULT_STOP_GATES,
+        "retry_policy": ZERO_TICKET_DEFAULT_RETRY_POLICY,
+        "notification_channels": zero_ticket_notification_channels(),
+    }
+
+
+def build_zero_ticket_continuation_packet(
+    *,
+    active_count: int,
+    movement_count: int,
+    focused_tickets: list[str] | tuple[str, ...],
+    last_ticket: LinearIssue | dict,
+    last_action: str,
+    new_state: str,
+    evidence_checked: list[str] | tuple[str, ...],
+    evidence_found: list[str] | tuple[str, ...],
+    next_ticket: str,
+    next_reason: str,
+    next_action: str,
+    allowed_actions: list[str] | tuple[str, ...],
+    forbidden_actions: list[str] | tuple[str, ...],
+    blockers: list[dict] | tuple[dict, ...] = (),
+    links: list[str] | tuple[str, ...] = (),
+    recommendation: str = "renew locally if budget is healthy; otherwise hand off to successor",
+    created_at: datetime | str | None = None,
+) -> dict:
+    ticket_packet = _coerce_ticket_packet(last_ticket)
+    return {
+        "version": ZERO_TICKET_PACKET_VERSION,
+        "kind": "continuation",
+        "created_at": _packet_ts(created_at),
+        "ticket": ticket_packet,
+        "project": ticket_packet.get("project") or "",
+        "current_state": new_state or ticket_packet.get("state") or "",
+        "active_count": active_count,
+        "movement_count": movement_count,
+        "focused_tickets": _packet_items(focused_tickets),
+        "last_action": last_action,
+        "new_state": new_state,
+        "evidence": {
+            "checked": _packet_items(evidence_checked),
+            "found": _packet_items(evidence_found),
+            "links": _packet_items(links),
+        },
+        "open_blockers": [dict(blocker) for blocker in blockers],
+        "next_action": {
+            "ticket_selected": next_ticket,
+            "why": next_reason,
+            "concrete": next_action,
+            "allowed_actions": _packet_items(allowed_actions),
+            "forbidden_actions": _packet_items(forbidden_actions),
+        },
+        "stop_gates": ZERO_TICKET_DEFAULT_STOP_GATES,
+        "retry_policy": ZERO_TICKET_DEFAULT_RETRY_POLICY,
+        "handoff_recommendation": recommendation,
+        "successor_prompt": (
+            "Continue the Linear zero-ticket loop from this packet. Recount active "
+            "tickets first, preserve project separation, and move exactly one ticket "
+            "one state closer to Done only with evidence."
+        ),
+        "notification_channels": zero_ticket_notification_channels(),
+    }
+
+
+def zero_ticket_retry_decision(
+    action: str,
+    failure_count: int,
+    *,
+    max_transient_attempts: int = 2,
+    lockout_after_failures: int = 3,
+) -> dict:
+    failures = max(0, int(failure_count))
+    if failures < max_transient_attempts:
+        return {
+            "action": action,
+            "decision": "retry",
+            "next_attempt": failures + 1,
+            "max_transient_attempts": max_transient_attempts,
+        }
+    return {
+        "action": action,
+        "decision": "lockout",
+        "failure_count": failures,
+        "lockout_after_failures": lockout_after_failures,
+        "next_action": (
+            "Lock out this action for the current loop run and escalate with exact "
+            "failure evidence."
+        ),
+    }
+
+
+def zero_ticket_notification_channels() -> list[dict]:
+    slack_ready = bool(os.environ.get("YENNEFER_SLACK_DM_WEBHOOK") or os.environ.get("SLACK_BOT_TOKEN"))
+    discord_ready = bool(os.environ.get("YENNEFER_DISCORD_WEBHOOK") or os.environ.get("DISCORD_BOT_TOKEN"))
+    return [
+        {
+            "channel": "yennefer_popup",
+            "status": "selected",
+            "reason": "local, private, already supported by DesktopNotifier",
+        },
+        {
+            "channel": "slack_dm",
+            "status": "available" if slack_ready else "not_configured",
+            "reason": "private DM only; never post to customer/public channels",
+        },
+        {
+            "channel": "discord_dm",
+            "status": "available" if discord_ready else "not_configured",
+            "reason": "private DM only; no Discord sender is wired in this repo yet",
+        },
+    ]
+
+
+def format_zero_ticket_packet(packet: dict) -> str:
+    if packet.get("kind") == "escalation":
+        return _format_zero_ticket_escalation(packet)
+    return _format_zero_ticket_continuation(packet)
+
+
+def format_zero_ticket_linear_comment(
+    packet: dict,
+    path: Path | None = None,
+    notification: dict | None = None,
+) -> str:
+    evidence = packet.get("evidence") or {}
+    action = "Generated Yennefer zero-ticket packet"
+    if path:
+        action += f" at `{path}`"
+    if notification:
+        action += f"; live notify result: `{notification}`"
+    return "\n".join([
+        "Checked:",
+        *_bullets(evidence.get("checked") or ["zero-ticket loop stop gate"]),
+        "",
+        "Evidence:",
+        *_bullets(evidence.get("found") or ["packet generated for Yennefer handoff"]),
+        "",
+        "Action taken:",
+        f"- {action}.",
+        "",
+        "Next concrete action:",
+        f"- {_next_action_text(packet)}",
+    ]).rstrip() + "\n"
+
+
+def _format_zero_ticket_escalation(packet: dict) -> str:
+    ticket = packet.get("ticket") or {}
+    evidence = packet.get("evidence") or {}
+    lines = [
+        "Yennefer escalation request",
+        "",
+        f"Ticket: {_ticket_label(ticket)}",
+        f"Project: {packet.get('project') or ticket.get('project') or '(none)'}",
+        f"Current state: {packet.get('current_state') or ticket.get('state') or '(unknown)'}",
+        f"Why input is needed: {packet.get('blocker') or 'human decision required'}",
+        "",
+        "Evidence checked:",
+        *_bullets(evidence.get("checked")),
+        "",
+        "Evidence found:",
+        *_bullets(evidence.get("found")),
+        "",
+        "Links/files:",
+        *_bullets(evidence.get("links")),
+        "",
+        "Decision requested:",
+        *_bullets([packet.get("decision_requested")]),
+        "",
+        "After approval:",
+        *_bullets([_next_action_text(packet)]),
+        "",
+        "Do not do:",
+        *_bullets((packet.get("next_action") or {}).get("forbidden_actions")),
+        "",
+        "Retry/lockout policy:",
+        *_bullets(_retry_policy_lines(packet.get("retry_policy"))),
+        "",
+        "Notification routing:",
+        *_bullets(_channel_lines(packet.get("notification_channels"))),
+    ]
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _format_zero_ticket_continuation(packet: dict) -> str:
+    ticket = packet.get("ticket") or {}
+    evidence = packet.get("evidence") or {}
+    next_action = packet.get("next_action") or {}
+    lines = [
+        "Linear zero-ticket continuation packet",
+        "",
+        "Run state:",
+        f"- Active count: {packet.get('active_count')}",
+        f"- Movement count this lease: {packet.get('movement_count')}",
+        f"- Focused tickets: {', '.join(packet.get('focused_tickets') or []) or 'none'}",
+        f"- Last ticket touched: {_ticket_label(ticket)}",
+        f"- Last action: {packet.get('last_action') or '(none)'}",
+        f"- New state: {packet.get('new_state') or packet.get('current_state') or '(unknown)'}",
+        "",
+        "Evidence:",
+        "- Checked:",
+        *_indented_bullets(evidence.get("checked")),
+        "- Found:",
+        *_indented_bullets(evidence.get("found")),
+        "- Links/files:",
+        *_indented_bullets(evidence.get("links")),
+        "",
+        "Open blockers:",
+    ]
+    blockers = packet.get("open_blockers") or []
+    if blockers:
+        for blocker in blockers:
+            lines.extend([
+                f"- Ticket: {blocker.get('ticket') or '(none)'}",
+                f"  Blocker: {blocker.get('blocker') or '(unknown)'}",
+                f"  Next concrete action: {blocker.get('next_action') or '(unknown)'}",
+            ])
+    else:
+        lines.append("- none")
+    lines.extend([
+        "",
+        "Next safe action:",
+        f"- Ticket selected: {next_action.get('ticket_selected') or '(none)'}",
+        f"- Why this ticket: {next_action.get('why') or '(unspecified)'}",
+        "- Allowed actions:",
+        *_indented_bullets(next_action.get("allowed_actions")),
+        "- Forbidden actions:",
+        *_indented_bullets(next_action.get("forbidden_actions")),
+        "",
+        "Stop gates:",
+        *_bullets(_stop_gate_lines(packet.get("stop_gates"))),
+        "",
+        "Retry/lockout policy:",
+        *_bullets(_retry_policy_lines(packet.get("retry_policy"))),
+        "",
+        "Successor-agent handoff:",
+        f"- Recommendation: {packet.get('handoff_recommendation') or '(none)'}",
+        f"- Prompt: {packet.get('successor_prompt') or '(none)'}",
+        "",
+        "Notification routing:",
+        *_bullets(_channel_lines(packet.get("notification_channels"))),
+    ])
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _coerce_ticket_packet(ticket: LinearIssue | dict) -> dict:
+    if isinstance(ticket, LinearIssue):
+        return _issue_packet(ticket)
+    ticket = ticket or {}
+    return {
+        "id": str(ticket.get("id") or ""),
+        "identifier": str(ticket.get("identifier") or ticket.get("id") or ""),
+        "title": str(ticket.get("title") or ""),
+        "url": str(ticket.get("url") or ""),
+        "created_at": str(ticket.get("created_at") or ticket.get("createdAt") or ""),
+        "updated_at": str(ticket.get("updated_at") or ticket.get("updatedAt") or ""),
+        "state": str(ticket.get("state") or ""),
+        "labels": list(ticket.get("labels") or []),
+        "priority": int(ticket.get("priority") or 0),
+        "project": str(ticket.get("project") or ""),
+    }
+
+
+def _packet_ts(value: datetime | str | None) -> str:
+    if isinstance(value, datetime):
+        return isoformat(value)
+    if value:
+        return str(value)
+    return utc_now()
+
+
+def _packet_items(items) -> list[str]:
+    if not items:
+        return []
+    if isinstance(items, str):
+        return [items]
+    return [str(item).strip() for item in items if str(item).strip()]
+
+
+def _ticket_label(ticket: dict) -> str:
+    identifier = ticket.get("identifier") or ticket.get("id") or "(unknown)"
+    title = ticket.get("title") or ""
+    return f"{identifier} - {title}" if title else str(identifier)
+
+
+def _next_action_text(packet: dict) -> str:
+    next_action = packet.get("next_action") or {}
+    if isinstance(next_action, dict):
+        concrete = next_action.get("concrete") or ""
+        selected = next_action.get("ticket_selected") or ""
+        if concrete and selected:
+            return f"{selected}: {concrete}"
+        return concrete or selected or "(none)"
+    return str(next_action or "(none)")
+
+
+def _bullets(items) -> list[str]:
+    values = items or []
+    if isinstance(values, str):
+        values = [values]
+    rendered = []
+    for item in values:
+        if not item:
+            continue
+        if isinstance(item, dict):
+            rendered.append("- " + json.dumps(item, sort_keys=True))
+        else:
+            rendered.append(f"- {item}")
+    return rendered or ["- none"]
+
+
+def _indented_bullets(items) -> list[str]:
+    return ["  " + line for line in _bullets(items)]
+
+
+def _stop_gate_lines(stop_gates: dict | None) -> list[str]:
+    gates = stop_gates or ZERO_TICKET_DEFAULT_STOP_GATES
+    return [f"{key}: {value}" for key, value in gates.items()]
+
+
+def _retry_policy_lines(retry_policy: dict | None) -> list[str]:
+    policy = retry_policy or ZERO_TICKET_DEFAULT_RETRY_POLICY
+    return [f"{key}: {value}" for key, value in policy.items()]
+
+
+def _channel_lines(channels) -> list[str]:
+    return [
+        f"{channel.get('channel')}: {channel.get('status')} - {channel.get('reason')}"
+        for channel in (channels or [])
+    ]
+
+
+def _zero_ticket_notification_text(packet: dict, path: Path) -> str:
+    ticket = packet.get("ticket") or {}
+    identifier = ticket.get("identifier") or ticket.get("id") or "loop"
+    if packet.get("kind") == "escalation":
+        reason = packet.get("decision_requested") or packet.get("blocker") or "decision needed"
+        return f"Zero-ticket loop needs input on {identifier}: {reason}. Packet: {path}"
+    next_action = packet.get("next_action") or {}
+    selected = next_action.get("ticket_selected") or "next ticket"
+    return (
+        f"Zero-ticket loop checkpoint after {packet.get('movement_count')} movements. "
+        f"Continue with {selected}. Packet: {path}"
+    )
+
+
+def _zero_ticket_hand_up(packet: dict, path: Path, now: datetime) -> dict:
+    ticket = packet.get("ticket") or {}
+    identifier = ticket.get("identifier") or ticket.get("id") or "loop"
+    opener = _zero_ticket_notification_text(packet, path)
+    return {
+        "id": f"ZTL:{identifier}:{isoformat(now)}",
+        "playbook_id": "ZTL",
+        "playbook_name": "Zero-Ticket Loop Escalation",
+        "status": "waiting_for_chair",
+        "created_at": isoformat(now),
+        "opener": opener,
+        "pre_authorized": "Create a packet, notify locally, and record Linear evidence if live notify fails.",
+        "on_go_ahead": _next_action_text(packet),
+        "payload": {
+            "tickets": [ticket] if ticket else [],
+            "packet": packet,
+            "packet_path": str(path),
+        },
+    }
+
+
+def _zero_ticket_comment_issue_id(packet: dict) -> str:
+    ticket = packet.get("ticket") or {}
+    return str(ticket.get("id") or ticket.get("identifier") or "")
 
 
 def parse_playbooks(markdown: str) -> dict[str, Playbook]:

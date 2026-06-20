@@ -9,7 +9,10 @@ from jarvis.playbooks import (
     LinearBoardClient,
     LinearIssue,
     PlaybookEngine,
+    build_zero_ticket_continuation_packet,
+    build_zero_ticket_escalation_packet,
     parse_playbooks,
+    zero_ticket_retry_decision,
 )
 
 
@@ -498,3 +501,136 @@ def test_hand_up_notifies_when_notifier_enabled(tmp_path):
     assert notifier.messages[0].startswith("Two decisions are waiting")
     assert state["last_notification"]["ok"] is True
     assert state["last_notification"]["playbook_id"] == "PB-1"
+
+
+def test_zero_ticket_escalates_dar95_style_drive_blocker_without_closing(tmp_path):
+    issue = LinearIssue(
+        id="issue-95",
+        identifier="DAR-95",
+        title="CSG impact analysis + open questions for Shlomi/Sales (Kurt)",
+        url="https://linear.app/darkvectorcognition/issue/DAR-95/example",
+        state="In Progress",
+        labels=("port",),
+        priority=2,
+        project="Port.io - AMER",
+    )
+    packet = build_zero_ticket_escalation_packet(
+        issue,
+        active_count=42,
+        evidence_checked=[
+            "Linear issue description and comments",
+            "Drive link from the issue",
+        ],
+        evidence_found=[
+            "Drive access is missing; no source document content could be verified",
+            "No evidence supports closing the ticket",
+        ],
+        blocker="Drive-access blocker",
+        decision_requested="Ask Al whether to grant Drive access or provide the document another way.",
+        last_action="Stopped before closing DAR-95",
+        next_action="After access is available, verify the document contents and then update Linear.",
+        forbidden_actions=[
+            "Do not close DAR-95",
+            "Do not guess what the Drive document says",
+            "Do not message external/customer-facing channels",
+        ],
+        created_at=NOW,
+    )
+    fake = FakeLinear()
+    notifier = FakeNotifier()
+    engine = make_engine(tmp_path, fake, notifier=notifier)
+
+    result = asyncio.run(
+        engine.route_zero_ticket_packet(
+            packet,
+            comment_issue_on_notify_failure=False,
+        )
+    )
+    state = load_state(engine)
+    text = open(result["packet_path"], encoding="utf-8").read()
+
+    assert result["status"] == "routed"
+    assert result["hand_up"] is True
+    assert notifier.messages[0].startswith("Zero-ticket loop needs input on DAR-95")
+    assert state["active"]["playbook_id"] == "ZTL"
+    assert state["active"]["payload"]["packet_path"] == result["packet_path"]
+    assert "Decision requested:" in text
+    assert "Ask Al whether to grant Drive access" in text
+    assert "Do not close DAR-95" in text
+    assert "yennefer_popup: selected" in text
+
+
+def test_zero_ticket_checkpoint_writes_resumable_successor_packet(tmp_path):
+    issue = LinearIssue(
+        id="issue-119",
+        identifier="DAR-119",
+        title="Zero-ticket loop escalation + handoff bridge",
+        url="https://linear.app/darkvectorcognition/issue/DAR-119/example",
+        state="In Review",
+        labels=("agent:codex", "council"),
+        priority=1,
+        project="Yennefer",
+    )
+    packet = build_zero_ticket_continuation_packet(
+        active_count=41,
+        movement_count=10,
+        focused_tickets=("DAR-122",),
+        last_ticket=issue,
+        last_action="Moved DAR-119 from In Progress to In Review with test evidence",
+        new_state="In Review",
+        evidence_checked=[
+            "pytest tests/test_playbooks.py",
+            "Linear DAR-119 comments",
+        ],
+        evidence_found=[
+            "DAR-119 reached reviewable boundary",
+            "Focused ticket DAR-122 remains next",
+        ],
+        next_ticket="DAR-122",
+        next_reason="Chair accorded it second-highest priority after DAR-119",
+        next_action="Read vault references for darkvectorcognition.ai/Familiar and start the DVC Chat fallback ticket.",
+        allowed_actions=[
+            "Recount active Linear tickets",
+            "Move exactly one ticket one state with evidence",
+        ],
+        forbidden_actions=[
+            "Do not blend Port.io AMER work into DVC Ops",
+            "Do not close tickets without evidence",
+        ],
+        blockers=[
+            {
+                "ticket": "DAR-95",
+                "blocker": "Historical Drive-access example",
+                "next_action": "Use escalation packet if access is still missing",
+            }
+        ],
+        created_at=NOW,
+    )
+    engine = make_engine(tmp_path, FakeLinear(), notifier=FakeNotifier())
+
+    result = asyncio.run(
+        engine.route_zero_ticket_packet(
+            packet,
+            comment_issue_on_notify_failure=False,
+        )
+    )
+    state = load_state(engine)
+    text = open(result["packet_path"], encoding="utf-8").read()
+
+    assert result["status"] == "routed"
+    assert result["hand_up"] is False
+    assert state["zero_ticket_loop"]["kind"] == "continuation"
+    assert "Movement count this lease: 10" in text
+    assert "Ticket selected: DAR-122" in text
+    assert "Continue the Linear zero-ticket loop from this packet" in text
+    assert "context_token_runtime: handoff_or_renew" in text
+
+
+def test_zero_ticket_retry_policy_locks_out_repeated_failures():
+    retry = zero_ticket_retry_decision("Drive fetch", 1)
+    lockout = zero_ticket_retry_decision("Drive fetch", 3)
+
+    assert retry["decision"] == "retry"
+    assert retry["next_attempt"] == 2
+    assert lockout["decision"] == "lockout"
+    assert "Lock out this action" in lockout["next_action"]
