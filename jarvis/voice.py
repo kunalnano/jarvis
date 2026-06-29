@@ -7,9 +7,8 @@ Supports:
 - Kokoro-82M via mlx-audio (local Apple Silicon, fixed voicepacks)
 - macOS native TTS (free, Mac only)
 
-Degradation chain (Flight 002): chatterbox → kokoro → elevenlabs → macOS say.
-Kokoro is the house fallback so that when Stormbreaker sleeps she downshifts
-to a local voice instead of the drip or a GPS.
+Degradation chain: chatterbox → explicit elevenlabs/11 → kokoro → optional macOS say.
+Fallbacks are never silent; degraded engines carry a visible warning.
 """
 
 import asyncio
@@ -18,9 +17,12 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
+
+from .brain import strip_tagless_reasoning
 
 console = Console()
 
@@ -53,7 +55,69 @@ def clean_for_speech(text: str) -> str:
     text = re.sub(r'\n{2,}', '. ', text)  # Multiple newlines to pause
     text = re.sub(r'\n', ' ', text)  # Single newlines to space
     text = re.sub(r'  +', ' ', text)
+    return strip_tagless_reasoning(text).strip()
+
+
+def clean_for_kokoro(text: str) -> str:
+    """Kokoro is sensitive to code-ish strings; make them pronounceable."""
+    text = text.replace("_", " ")
+    text = clean_for_speech(text)
+    text = text.replace("==", " ")
+    text = text.replace("-", " ")
+    text = re.sub(r'https?://\S+', 'link', text)
+    text = re.sub(r'\b[\w.-]+\.(?:local|net|com|org|io)\b', 'hostname', text)
+    text = re.sub(r'\b(\d+(?:\.\d+)?)\s*Ti\b', r'\1 terabytes', text)
+    text = re.sub(r'\b(\d+(?:\.\d+)?)\s*Gi\b', r'\1 gigabytes', text)
+    text = re.sub(r'\b(\d+(?:\.\d+)?)\s*Mi\b', r'\1 megabytes', text)
+    text = re.sub(r'[/\\|{}[\]<>]+', ' ', text)
+    text = re.sub(r'[:=]+', ': ', text)
+    text = re.sub(r'\b[a-zA-Z]+(?:\.[a-zA-Z0-9]+)+\b', 'hostname', text)
+    text = re.sub(r'\s+', ' ', text)
     return text.strip()
+
+
+def tts_chunks(text: str, limit: int = 180) -> list[str]:
+    """Split text into short chunks for local TTS engines."""
+    text = text.strip()
+    if not text:
+        return []
+    pieces = re.split(r'(?<=[.!?])\s+', text)
+    chunks: list[str] = []
+    current = ""
+    for piece in pieces:
+        if len(piece) > limit:
+            if current:
+                chunks.append(current.strip())
+                current = ""
+            words = piece.split()
+            bucket = ""
+            for word in words:
+                if len(bucket) + len(word) + 1 > limit:
+                    if bucket:
+                        chunks.append(bucket.strip())
+                    bucket = word
+                else:
+                    bucket = f"{bucket} {word}".strip()
+            if bucket:
+                chunks.append(bucket.strip())
+            continue
+        candidate = f"{current} {piece}".strip()
+        if current and len(candidate) > limit:
+            chunks.append(current.strip())
+            current = piece
+        else:
+            current = candidate
+    if current:
+        chunks.append(current.strip())
+    return chunks
+
+
+def kokoro_chunks(text: str) -> list[str]:
+    """Kokoro is most reliable with one short sentence per generation."""
+    chunks: list[str] = []
+    for piece in re.split(r'(?<=[.!?])\s+', text.strip()):
+        chunks.extend(tts_chunks(piece, limit=55))
+    return [chunk for chunk in chunks if chunk]
 
 
 def _applescript_string(s: str) -> str:
@@ -67,11 +131,13 @@ class Voice:
     def __init__(self, config: dict):
         self.config = config.get('voice_output', {})
         self.engine = self.config.get('engine', 'elevenlabs')
+        self.preferred_engine = self.engine
 
         # ElevenLabs settings
         self.voice_id = self.config.get('voice_id', '')
         self.model = self.config.get('model', 'eleven_turbo_v2_5')
         self.api_key = self.config.get('api_key') or os.environ.get('ELEVENLABS_API_KEY')
+        self.allow_elevenlabs_fallback = self.config.get('allow_elevenlabs_fallback', False)
 
         # Voice tuning parameters
         self.stability = self.config.get('stability', 0.5)
@@ -85,6 +151,13 @@ class Voice:
         self.chatterbox_api_base = chatterbox.get('api_base', 'http://localhost:8004').rstrip('/')
         self.chatterbox_voice = chatterbox.get('voice', 'default')
         self.chatterbox_speed = chatterbox.get('speed', self.speed)
+        self.chatterbox_startup_wait_seconds = float(chatterbox.get('startup_wait_seconds', 0))
+        self.chatterbox_retry_interval_seconds = float(chatterbox.get('retry_interval_seconds', 2))
+        self.chatterbox_probe_on_start = bool(chatterbox.get('probe_on_start', False))
+        self.chatterbox_probe_text = chatterbox.get(
+            'probe_text',
+            'Yennefer local voice health check.',
+        )
         # Extra fields merged into the request body (e.g. exaggeration) so the
         # server's dials are tunable from config without code changes.
         self.chatterbox_params = chatterbox.get('params', {})
@@ -111,6 +184,10 @@ class Voice:
 
         # DAR-130: last desktop cue (cleaned text, monotonic ts) for dedupe.
         self._last_cue = ("", 0.0)
+        self.degraded = False
+        self.degraded_reason = ""
+        self.fallback_warning = ""
+        self.last_chatterbox_health: dict = {}
 
     async def initialize(self):
         """Initialize TTS engine."""
@@ -135,7 +212,7 @@ class Voice:
         elif self.engine == 'macos':
             await self._init_macos()
         else:
-            if self.api_key and self.voice_id:
+            if self.allow_elevenlabs_fallback and self.api_key and self.voice_id:
                 await self._init_elevenlabs()
             elif sys.platform == 'darwin':
                 self.engine = 'macos'
@@ -235,47 +312,184 @@ class Voice:
         )
 
     async def _init_chatterbox(self):
-        """Initialize Chatterbox: confirm the server is reachable, else degrade."""
-        import httpx
-
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                # Any response (even 404 on /health) means the server is up
-                resp = await client.get(f"{self.chatterbox_api_base}/health")
-                if resp.status_code >= 500:
-                    raise RuntimeError(f"server unhealthy (HTTP {resp.status_code})")
-        except Exception as e:
+        """Initialize Chatterbox: confirm the server is healthy, else degrade."""
+        health = await self._wait_for_chatterbox()
+        self.last_chatterbox_health = health
+        if not health.get('ok'):
+            reason = health.get('reason') or "Chatterbox did not become healthy"
             console.print(
-                f"[yellow]Chatterbox unreachable at {self.chatterbox_api_base}: {e}[/yellow]"
+                f"[yellow]Chatterbox degraded at {self.chatterbox_api_base}: {reason}[/yellow]"
             )
-            await self._fallback_from_chatterbox()
+            await self._fallback_from_chatterbox(reason)
             return
 
         self.initialized = True
         self.engine = 'chatterbox'
+        self._clear_degraded()
         console.print(
             f"[green]✓[/green] Chatterbox ready "
             f"({self.chatterbox_api_base}, voice: {self.chatterbox_voice}, speed: {self.chatterbox_speed}x)"
         )
 
-    async def _fallback_from_chatterbox(self):
-        """Degrade chatterbox → kokoro → elevenlabs → macOS say (Flight 002 chain).
+    def _chatterbox_voice_path(self) -> Path | None:
+        """Return the configured voice path when it looks like a local file."""
+        voice = str(self.chatterbox_voice or "").strip()
+        if not voice or voice == "default":
+            return None
+        path = Path(voice).expanduser()
+        if path.is_absolute() or path.suffix.lower() in {'.wav', '.mp3', '.m4a', '.flac', '.ogg'}:
+            return path
+        return None
 
-        Kokoro (local, in-register) outranks ElevenLabs so a sleeping
-        Stormbreaker doesn't push her back onto the drip; ElevenLabs stays
-        as a deep safety net during the decant.
+    async def _check_chatterbox_health(
+        self,
+        *,
+        probe_audio: bool = False,
+        timeout: float = 5.0,
+    ) -> dict:
+        """Check Chatterbox service, reference file, and optionally synthesis."""
+        import httpx
+
+        checks = {
+            'reference_audio': 'skipped',
+            'health_endpoint': 'pending',
+            'audio_probe': 'skipped',
+        }
+        result = {
+            'ok': False,
+            'api_base': self.chatterbox_api_base,
+            'voice': self.chatterbox_voice,
+            'checks': checks,
+            'reason': '',
+        }
+
+        voice_path = self._chatterbox_voice_path()
+        if voice_path is not None:
+            if not voice_path.exists():
+                checks['reference_audio'] = 'missing'
+                result['reason'] = f"reference audio not found: {voice_path}"
+                return result
+            checks['reference_audio'] = 'ok'
+
+        try:
+            request_timeout = max(timeout, 120.0) if probe_audio else timeout
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(request_timeout, connect=5.0)
+            ) as client:
+                resp = await client.get(f"{self.chatterbox_api_base}/health")
+                if resp.status_code != 200:
+                    checks['health_endpoint'] = f"http_{resp.status_code}"
+                    result['reason'] = f"health endpoint returned HTTP {resp.status_code}"
+                    return result
+                try:
+                    payload = resp.json()
+                except ValueError:
+                    payload = {}
+                ready = payload.get('ready', True)
+                error = payload.get('error')
+                if ready is False or error:
+                    checks['health_endpoint'] = 'not_ready'
+                    result['reason'] = error or "health endpoint reports not ready"
+                    return result
+                checks['health_endpoint'] = 'ok'
+
+                if probe_audio:
+                    probe_payload = {
+                        'model': 'chatterbox',
+                        'input': self.chatterbox_probe_text,
+                        'voice': self.chatterbox_voice,
+                        'response_format': 'wav',
+                        'speed': self.chatterbox_speed,
+                        **self.chatterbox_params,
+                    }
+                    probe = await client.post(
+                        f"{self.chatterbox_api_base}/v1/audio/speech",
+                        json=probe_payload,
+                    )
+                    if probe.status_code != 200:
+                        checks['audio_probe'] = f"http_{probe.status_code}"
+                        result['reason'] = f"audio probe returned HTTP {probe.status_code}"
+                        return result
+                    if len(probe.content or b"") < 64:
+                        checks['audio_probe'] = 'empty'
+                        result['reason'] = "audio probe returned no playable bytes"
+                        return result
+                    checks['audio_probe'] = 'ok'
+
+        except Exception as e:
+            checks['health_endpoint'] = 'error'
+            result['reason'] = f"{type(e).__name__}: {e}".rstrip()
+            return result
+
+        result['ok'] = True
+        result['reason'] = ''
+        return result
+
+    async def _wait_for_chatterbox(self) -> dict:
+        """Wait briefly for a cold Chatterbox model load before falling back."""
+        deadline = time.monotonic() + max(0.0, self.chatterbox_startup_wait_seconds)
+        last_health: dict = {}
+        while True:
+            last_health = await self._check_chatterbox_health(
+                probe_audio=self.chatterbox_probe_on_start,
+            )
+            if last_health.get('ok'):
+                return last_health
+            if time.monotonic() >= deadline:
+                return last_health
+            await asyncio.sleep(max(0.1, self.chatterbox_retry_interval_seconds))
+
+    def _mark_degraded(self, engine: str, reason: str):
+        self.degraded = True
+        self.degraded_reason = reason
+        if engine == 'elevenlabs':
+            self.fallback_warning = (
+                "VOICE WARNING: using ElevenLabs/11 fallback because Chatterbox is degraded "
+                f"({reason}). This may spend paid credits."
+            )
+        elif engine == 'kokoro':
+            self.fallback_warning = (
+                "VOICE WARNING: using Kokoro fallback, not the Yennefer clone voice, "
+                f"because Chatterbox is degraded ({reason})."
+            )
+        elif engine == 'macos':
+            self.fallback_warning = (
+                "VOICE WARNING: using macOS fallback voice, not the Yennefer clone voice, "
+                f"because Chatterbox is degraded ({reason})."
+            )
+        else:
+            self.fallback_warning = f"VOICE WARNING: using {engine} because Chatterbox is degraded ({reason})."
+        console.print(f"[yellow]{self.fallback_warning}[/yellow]")
+
+    def _clear_degraded(self):
+        self.degraded = False
+        self.degraded_reason = ""
+        self.fallback_warning = ""
+
+    async def _fallback_from_chatterbox(self, reason: str = "Chatterbox unavailable"):
+        """Degrade chatterbox → explicit ElevenLabs/11 → Kokoro → optional macOS say.
+
+        ElevenLabs/11 is allowed only when config explicitly opts in, and every
+        fallback path records a visible warning so the active voice is never
+        silently mistaken for the local clone.
         """
+        if self.allow_elevenlabs_fallback and self.api_key and self.voice_id:
+            console.print("[dim]Falling back to ElevenLabs/11[/dim]")
+            await self._init_elevenlabs()
+            if self.initialized:
+                self._mark_degraded('elevenlabs', reason)
+                return
         if self._kokoro_available():
             console.print("[dim]Falling back to Kokoro (local)[/dim]")
             await self._init_kokoro()
             if self.initialized:
+                self._mark_degraded('kokoro', reason)
                 return
-        if self.api_key and self.voice_id:
-            console.print("[dim]Falling back to ElevenLabs[/dim]")
-            await self._init_elevenlabs()
-        elif sys.platform == 'darwin':
+        if sys.platform == 'darwin' and self.config.get('allow_macos_fallback', False):
             console.print("[dim]Falling back to macOS TTS[/dim]")
             await self._init_macos()
+            if self.initialized:
+                self._mark_degraded('macos', reason)
         else:
             console.print("[red]✗[/red] No fallback TTS engine available")
 
@@ -292,10 +506,10 @@ class Voice:
             console.print(
                 "[yellow]Kokoro unavailable (mlx-audio not installed or not macOS)[/yellow]"
             )
-            if self.api_key and self.voice_id:
+            if self.allow_elevenlabs_fallback and self.api_key and self.voice_id:
                 console.print("[dim]Falling back to ElevenLabs[/dim]")
                 await self._init_elevenlabs()
-            elif sys.platform == 'darwin':
+            elif sys.platform == 'darwin' and self.config.get('allow_macos_fallback', False):
                 console.print("[dim]Falling back to macOS TTS[/dim]")
                 await self._init_macos()
             else:
@@ -318,6 +532,71 @@ class Voice:
         self.initialized = True
         self.engine = 'macos'
         console.print(f"[green]✓[/green] macOS TTS ready (voice: {self.macos_voice})")
+
+    async def try_promote_chatterbox(self, *, probe_audio: bool = False) -> dict:
+        """Promote a degraded voice back to Chatterbox when the local clone recovers."""
+        if self.preferred_engine != 'chatterbox':
+            return {
+                'promoted': False,
+                'engine': self.engine,
+                'reason': 'preferred engine is not chatterbox',
+                'voice': self.runtime_status(),
+            }
+        health = await self._check_chatterbox_health(probe_audio=probe_audio)
+        self.last_chatterbox_health = health
+        if not health.get('ok'):
+            return {
+                'promoted': False,
+                'engine': self.engine,
+                'reason': health.get('reason') or 'Chatterbox is not healthy',
+                'health': health,
+                'voice': self.runtime_status(),
+            }
+        previous = self.engine
+        self.engine = 'chatterbox'
+        self.initialized = True
+        self._clear_degraded()
+        if previous != 'chatterbox':
+            console.print("[green]✓[/green] Chatterbox recovered; promoted voice back to local clone")
+        return {
+            'promoted': previous != 'chatterbox',
+            'engine': self.engine,
+            'previous_engine': previous,
+            'health': health,
+            'voice': self.runtime_status(),
+        }
+
+    async def runtime_status_async(self, *, probe_chatterbox: bool = False) -> dict:
+        if self.preferred_engine == 'chatterbox':
+            self.last_chatterbox_health = await self._check_chatterbox_health(
+                probe_audio=probe_chatterbox,
+            )
+        return self.runtime_status()
+
+    def runtime_status(self) -> dict:
+        return {
+            'engine': self.engine,
+            'preferred_engine': self.preferred_engine,
+            'initialized': self.initialized,
+            'degraded': self.degraded,
+            'degraded_reason': self.degraded_reason,
+            'fallback_warning': self.fallback_warning,
+            'chatterbox': {
+                'api_base': self.chatterbox_api_base,
+                'voice': self.chatterbox_voice,
+                'health': self.last_chatterbox_health,
+            },
+            'kokoro': {
+                'voice': self.kokoro_voice,
+                'model': self.kokoro_model,
+            },
+            'elevenlabs': {
+                'configured': bool(self.api_key and self.voice_id),
+                'fallback_allowed': self.allow_elevenlabs_fallback,
+                'voice_id_ok': bool(self.voice_id),
+            },
+            'macos_fallback_allowed': bool(self.config.get('allow_macos_fallback', False)),
+        }
 
     async def _emit_speech_cue(self, text: str):
         """DAR-130: fire a desktop notification for every spoken utterance.
@@ -366,6 +645,9 @@ class Voice:
         await self._emit_speech_cue(text)
 
         console.print(f"[magenta]Yennefer:[/magenta] {text}")
+
+        if self.preferred_engine == 'chatterbox' and (self.engine != 'chatterbox' or not self.initialized):
+            await self.try_promote_chatterbox(probe_audio=False)
 
         if not self.initialized:
             console.print("[yellow]Voice not initialized[/yellow]")
@@ -479,39 +761,54 @@ class Voice:
         globbed by prefix so segment-naming differences across mlx-audio
         versions don't break playback.
         """
+        played_any = False
         try:
             loop = asyncio.get_event_loop()
+            chunks = kokoro_chunks(clean_for_kokoro(text))
+            if not chunks:
+                return
             with tempfile.TemporaryDirectory() as tmpdir:
-                prefix = os.path.join(tmpdir, 'yen')
-                cmd = [
-                    sys.executable, '-m', 'mlx_audio.tts.generate',
-                    '--model', self.kokoro_model,
-                    '--text', text,
-                    '--voice', self.kokoro_voice,
-                    '--speed', str(self.kokoro_speed),
-                    '--file_prefix', prefix,
-                    *self.kokoro_extra_args,
-                ]
-                await loop.run_in_executor(
-                    None,
-                    lambda: subprocess.run(
-                        cmd, check=True, capture_output=True, timeout=120
-                    )
-                )
-
-                wavs = sorted(Path(tmpdir).glob('yen*.wav'))
-                if not wavs:
-                    raise RuntimeError('mlx-audio produced no wav output')
-                for wav in wavs:
-                    await loop.run_in_executor(
+                for idx, chunk in enumerate(chunks):
+                    prefix = f'yen_{idx}'
+                    cmd = [
+                        sys.executable, '-m', 'mlx_audio.tts.generate',
+                        '--model', self.kokoro_model,
+                        '--text', chunk,
+                        '--voice', self.kokoro_voice,
+                        '--speed', str(self.kokoro_speed),
+                        '--output_path', tmpdir,
+                        '--file_prefix', prefix,
+                        *self.kokoro_extra_args,
+                    ]
+                    completed = await loop.run_in_executor(
                         None,
-                        lambda w=wav: subprocess.run(["afplay", str(w)], check=True)
+                        lambda c=cmd: subprocess.run(
+                            c, check=True, capture_output=True, timeout=120, text=True
+                        )
                     )
+
+                    wavs = sorted(Path(tmpdir).glob(f'{prefix}*.wav'))
+                    if not wavs:
+                        detail = (completed.stderr or completed.stdout or "").strip()
+                        detail = detail[-500:] if detail else "no generator output"
+                        raise RuntimeError(f"mlx-audio produced no wav output: {detail}")
+                    for wav in wavs:
+                        await loop.run_in_executor(
+                            None,
+                            lambda w=wav: subprocess.run(["afplay", str(w)], check=True)
+                        )
+                        played_any = True
 
         except Exception as e:
             console.print(f"[yellow]Kokoro TTS error: {e}[/yellow]")
-            # Last local rung before silence
-            if sys.platform == 'darwin':
+            # Avoid the jarring two-voice effect: if Kokoro spoke any chunk, do
+            # not hand the remainder to macOS `say`. Explicit opt-in keeps the
+            # local voice from silently becoming Samantha.
+            if (
+                not played_any
+                and sys.platform == 'darwin'
+                and self.config.get('allow_macos_fallback', False)
+            ):
                 await self._speak_macos(text)
 
     async def _speak_macos(self, text: str):

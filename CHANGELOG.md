@@ -5,6 +5,17 @@ All notable changes to Yennefer AI Assistant will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - 2026-06-29
+
+### Added
+- Explicit Chatterbox health state for the local Mac clone voice, including reference-audio checks, `/health` readiness, optional audio probe, and runtime status API.
+- Voice status and Chatterbox reload controls in the local Yennefer chat UI.
+- Automatic promotion back to Chatterbox when the local clone voice recovers after a degraded fallback.
+
+### Changed
+- Configured local Mac fallback order to prefer explicit ElevenLabs/11 fallback after Chatterbox, with visible warnings, before Kokoro or macOS fallback.
+- Yennefer now waits for Chatterbox during local startup using the configured warm-up window before declaring voice degradation.
+
 ## [0.3.2] - 2026-01-03
 
 ### Added

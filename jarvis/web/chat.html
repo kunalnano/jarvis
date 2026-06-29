@@ -21,13 +21,25 @@
   .spacer{ flex:1; }
   .toggle{ display:flex; align-items:center; gap:7px; color:var(--muted); font-size:12px; cursor:pointer; user-select:none; }
   .toggle input{ accent-color:var(--accent); }
+  .voice-state{ display:flex; align-items:center; gap:10px; padding:9px 20px; border-bottom:1px solid var(--line);
+                background:#120f1a; color:var(--muted); font-size:12px; }
+  .voice-state.ok{ color:#b7efca; }
+  .voice-state.warn{ color:#ffd28a; background:#1d160f; border-bottom-color:#4a3520; }
+  .voice-state strong{ color:inherit; }
+  .voice-state .spacer{ flex:1; }
+  .voice-state button{ padding:6px 11px; border-radius:8px; background:#2a2140; color:#efe7ff; font-size:12px; }
+  .voice-state.warn button{ background:#5d3415; color:#fff0cf; }
   #log{ flex:1; overflow-y:auto; padding:24px 20px; display:flex; flex-direction:column; gap:14px; }
-  .msg{ max-width:78%; padding:11px 15px; border-radius:16px; white-space:pre-wrap; word-wrap:break-word; }
+  .entry{ max-width:78%; display:flex; flex-direction:column; }
+  .entry.user{ align-self:flex-end; align-items:flex-end; }
+  .entry.yenn{ align-self:flex-start; align-items:flex-start; }
+  .msg{ max-width:100%; padding:11px 15px; border-radius:16px; white-space:pre-wrap; word-wrap:break-word; }
   .msg.user{ align-self:flex-end; background:var(--user); border:1px solid var(--line); border-bottom-right-radius:5px; }
   .msg.yenn{ align-self:flex-start; background:linear-gradient(180deg,#1b1430,#171120);
              border:1px solid var(--line); border-bottom-left-radius:5px; }
   .who{ font-size:11px; color:var(--muted); margin:0 6px 4px; }
   .who.y{ color:var(--accent); }
+  .stamp{ color:var(--muted); }
   .action{ align-self:flex-start; max-width:78%; border:1px solid var(--line); border-left:3px solid var(--accent);
            border-radius:10px; background:#130f1e; overflow:hidden; }
   .action .h{ padding:7px 12px; font-size:12px; color:#c9a9ff; cursor:pointer; display:flex; gap:8px; align-items:center; }
@@ -54,10 +66,17 @@
 <body>
   <header>
     <div class="dot" id="status"></div>
-    <div><h1>Yennefer</h1><div class="sub">local presence · qwen · on your Mac</div></div>
+    <div><h1>Yennefer</h1><div class="sub">local presence · LM Studio · on your Mac</div></div>
     <div class="spacer"></div>
-    <label class="toggle"><input type="checkbox" id="voice"> speak replies</label>
+    <label class="toggle"><input type="checkbox" id="voice" checked> speak replies</label>
   </header>
+  <div class="voice-state" id="voiceState" hidden>
+    <strong id="voiceEngine"></strong>
+    <span id="voiceSummary"></span>
+    <div class="spacer"></div>
+    <button id="voiceProbe" type="button">Check</button>
+    <button id="voiceReload" type="button">Reload Chatterbox</button>
+  </div>
   <div id="log"></div>
   <footer>
     <div class="row">
@@ -70,24 +89,39 @@ const log = document.getElementById('log');
 const box = document.getElementById('box');
 const sendBtn = document.getElementById('send');
 const voice = document.getElementById('voice');
+const statusDot = document.getElementById('status');
+const voiceState = document.getElementById('voiceState');
+const voiceEngine = document.getElementById('voiceEngine');
+const voiceSummary = document.getElementById('voiceSummary');
+const voiceProbe = document.getElementById('voiceProbe');
+const voiceReload = document.getElementById('voiceReload');
 
 function el(cls, html){ const d=document.createElement('div'); d.className=cls; if(html!==undefined) d.innerHTML=html; return d; }
 function esc(s){ return (s||'').replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
-function scroll(){ log.scrollTop = log.scrollHeight; }
+function stamp(){
+  return new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+}
+function scroll(){ log.scrollTop = 0; }
 
 function bubble(who, text){
+  const entry = el('entry ' + (who==='you'?'user':'yenn'));
   const wrap = el('msg ' + (who==='you'?'user':'yenn'));
-  const lbl = el('who' + (who==='you'?'':' y')); lbl.textContent = who==='you'?'You':'Yennefer';
-  log.appendChild(lbl); wrap.textContent = text; log.appendChild(wrap); scroll();
+  const lbl = el('who' + (who==='you'?'':' y'));
+  lbl.innerHTML = (who==='you'?'You':'Yennefer') + ' <span class="stamp">' + stamp() + '</span>';
+  wrap.textContent = text;
+  entry.appendChild(lbl);
+  entry.appendChild(wrap);
+  log.prepend(entry);
+  scroll();
 }
 function actionCard(a){
   const c = el('action');
   const h = el('h', '⚙︎ ran <b>'+esc(a.tool)+'</b> '+(a.args&&Object.keys(a.args).length?'· '+esc(JSON.stringify(a.args)):'')+'  <span style="color:#7a6f95">(show)</span>');
   const pre = document.createElement('pre'); pre.textContent = a.result || ''; pre.style.display='none';
   h.onclick = ()=>{ pre.style.display = pre.style.display==='none'?'block':'none'; };
-  c.appendChild(h); c.appendChild(pre); log.appendChild(c); scroll();
+  c.appendChild(h); c.appendChild(pre); log.prepend(c); scroll();
 }
-function thinking(){ const t=el('msg yenn dots','<span></span><span></span><span></span>'); t.id='thinking'; log.appendChild(t); scroll(); }
+function thinking(){ const t=el('msg yenn dots','<span></span><span></span><span></span>'); t.id='thinking'; log.prepend(t); scroll(); }
 function unthink(){ const t=document.getElementById('thinking'); if(t) t.remove(); }
 
 async function post(payload){
@@ -99,6 +133,7 @@ async function post(payload){
     (d.actions||[]).forEach(actionCard);
     if(d.reply) bubble('yenn', d.reply);
     if(d.pending) confirmCard(d.pending);
+    refreshVoiceStatus();
   }catch(e){ unthink(); bubble('yenn','(I lost the connection to my backend.)'); }
 }
 function confirmCard(p){
@@ -107,17 +142,74 @@ function confirmCard(p){
   const btns = el('btns');
   const yes = el('approve'); yes.textContent='Approve'; yes.onclick=()=>{ c.remove(); post({confirm:p, speak:voice.checked}); };
   const no = el('cancel'); no.textContent='Cancel'; no.onclick=()=>{ c.remove(); post({decline:true}); };
-  btns.appendChild(yes); btns.appendChild(no); c.appendChild(btns); log.appendChild(c); scroll();
+  btns.appendChild(yes); btns.appendChild(no); c.appendChild(btns); log.prepend(c); scroll();
 }
 function send(){
   const t = box.value.trim(); if(!t) return;
   bubble('you', t); box.value=''; box.style.height='auto';
   post({message:t, speak:voice.checked});
 }
+function renderVoiceStatus(d){
+  if(!d){ return; }
+  const engine = d.engine || 'unknown';
+  const preferred = d.preferred_engine || engine;
+  const warning = d.fallback_warning || '';
+  const health = d.chatterbox && d.chatterbox.health;
+  const chatterboxUnhealthy = preferred === 'chatterbox' && health && health.ok === false;
+  voiceState.hidden = false;
+  voiceState.className = 'voice-state ' + (warning || chatterboxUnhealthy ? 'warn' : 'ok');
+  voiceEngine.textContent = 'Voice: ' + engine;
+  if(warning){
+    voiceSummary.textContent = warning;
+    statusDot.classList.add('off');
+  }else if(chatterboxUnhealthy){
+    voiceSummary.textContent = 'Chatterbox health check failed: ' + (health.reason || 'not ready');
+    statusDot.classList.add('off');
+  }else if(engine === 'chatterbox'){
+    const probe = health && health.checks && health.checks.audio_probe === 'ok' ? ' · audio probe ok' : '';
+    voiceSummary.textContent = 'Local Chatterbox clone active' + probe;
+    statusDot.classList.remove('off');
+  }else if(preferred === 'chatterbox'){
+    voiceSummary.textContent = 'Preferred Chatterbox is not active.';
+    statusDot.classList.add('off');
+  }else{
+    voiceSummary.textContent = 'Configured engine active.';
+    statusDot.classList.remove('off');
+  }
+}
+async function refreshVoiceStatus(probe=false){
+  try{
+    const r = await fetch('/api/voice/status' + (probe ? '?probe=true' : ''));
+    renderVoiceStatus(await r.json());
+  }catch(e){
+    voiceState.hidden = false;
+    voiceState.className = 'voice-state warn';
+    voiceEngine.textContent = 'Voice: unknown';
+    voiceSummary.textContent = 'Voice status is unavailable.';
+    statusDot.classList.add('off');
+  }
+}
+async function reloadChatterbox(){
+  voiceReload.disabled = true;
+  try{
+    const r = await fetch('/api/voice/reload-chatterbox',{method:'POST'});
+    const d = await r.json();
+    renderVoiceStatus(d.voice || d);
+    if(d.promoted) bubble('yenn','Chatterbox is healthy again. I am back on the local clone voice.');
+    else if(d.reason) bubble('yenn','Chatterbox is not ready yet: ' + d.reason);
+  }catch(e){
+    bubble('yenn','I could not reload Chatterbox from here.');
+  }finally{
+    voiceReload.disabled = false;
+  }
+}
 sendBtn.onclick = send;
+voiceProbe.onclick = ()=>refreshVoiceStatus(true);
+voiceReload.onclick = reloadChatterbox;
 box.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } });
 box.addEventListener('input', ()=>{ box.style.height='auto'; box.style.height=Math.min(box.scrollHeight,140)+'px'; });
 bubble('yenn', "I'm here. Ask me something, or tell me to do something — check status, open an app, look at a repo, run one of your agents.");
+refreshVoiceStatus();
 box.focus();
 </script>
 </body>

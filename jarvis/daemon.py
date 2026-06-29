@@ -35,9 +35,8 @@ class YenneferDaemon:
     async def run(self):
         await self.voice.initialize()
 
-        # The brain lives on a remote box (Stormbreaker) that may be asleep at
-        # login. Retry with backoff rather than dying, so she comes alive when
-        # it's reachable and idles quietly otherwise.
+        # LM Studio is normally local, but it may not be ready at login. Retry
+        # with backoff rather than dying, so she comes alive when reachable.
         attempt = 0
         while not self._stop.is_set():
             if await self.brain.initialize():
