@@ -1,5 +1,6 @@
 # Virtual environments
 .venv/
+.venv-*/
 venv/
 env/
 ENV/
@@ -45,6 +46,7 @@ Thumbs.db
 *.wav
 test*.mp3
 test*.wav
+.local/
 
 # Environment variables (secrets)
 .env

@@ -45,3 +45,25 @@ def test_missing_fields_yield_silence():
 def test_unclosed_think_in_content_yields_silence():
     # Model cut off mid-thought inside content itself.
     assert extract_speakable({"content": "<think>half a thought"}) == ""
+
+
+def test_tagless_reasoning_in_content_is_silenced():
+    msg = {
+        "content": (
+            "The user is asking about the stakes of the matches scheduled for today. "
+            "I need to synthesize the information from the search results."
+        )
+    }
+
+    assert extract_speakable(msg) == ""
+
+
+def test_tagless_reasoning_with_final_answer_marker_yields_answer():
+    msg = {
+        "content": (
+            "The user is asking about fixtures.\n"
+            "Final answer: England plays Panama today."
+        )
+    }
+
+    assert extract_speakable(msg) == "England plays Panama today."

@@ -31,6 +31,8 @@ def load_dotenv():
                 if (value.startswith('"') and value.endswith('"')) or \
                    (value.startswith("'") and value.endswith("'")):
                     value = value[1:-1]
+                if value == "" and os.environ.get(key):
+                    continue
                 os.environ[key] = value
 
 

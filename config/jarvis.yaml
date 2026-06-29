@@ -1,30 +1,86 @@
-# Yennefer Configuration - Windows with Local LM Studio + ElevenLabs TTS
+# Yennefer Configuration - local Mac runtime
 
 # Voice Input Settings
 voice_input:
-  engine: text              # text input - use Win+H for voice typing
+  engine: text
 
-# Voice Output Settings (ElevenLabs)
+# Voice Output Settings
 voice_output:
-  voice_id: ${ELEVENLABS_VOICE_ID}    # Set via environment variable or .env file
-  model: eleven_turbo_v2_5            # eleven_turbo_v2_5 (fast), eleven_multilingual_v2 (quality)
-  api_key: ${ELEVENLABS_API_KEY}      # Set via environment variable or .env file
-  
-  # Voice tuning - adjust these to fix pitch/intonation issues
-  stability: 0.6            # 0-1: Higher = more consistent tone, less variation
-  similarity_boost: 0.75    # 0-1: How closely to match original voice
-  style: 0.0                # 0-1: Style exaggeration (keep low for natural speech)
-  speed: 1.15               # 0.25-4.0: Speech rate (1.0 = normal)
-  use_speaker_boost: true   # Enhances voice clarity
+  engine: chatterbox
+  # Live interaction uses the local Chatterbox clone. ElevenLabs is configured
+  # only for explicit manual tests; do not silently fall back to paid TTS.
+  voice_id: ${ELEVENLABS_VOICE_ID}
+  api_key: ${ELEVENLABS_API_KEY}
+  allow_elevenlabs_fallback: true
+  model: eleven_turbo_v2_5
+  stability: 0.6
+  similarity_boost: 0.75
+  style: 0.0
+  use_speaker_boost: true
+  speed: 0.96
+  chatterbox:
+    api_base: "http://127.0.0.1:8004"
+    voice: /Users/alsharma/Projects/yennefer/.local/voice-clones/her.wav
+    speed: 0.96
+    startup_wait_seconds: 90
+    retry_interval_seconds: 5
+    probe_on_start: false
+    params:
+      exaggeration: 0.5
+      cfg_weight: 0.5
+      temperature: 0.8
+  kokoro:
+    model: prince-canuma/Kokoro-82M
+    voice: bf_isabella
+  allow_macos_fallback: false
+  macos_voice: Samantha
+  rate: 180
 
 # LLM Backend Settings
 llm:
   backend: lmstudio
-  api_base: "http://192.168.7.200:1234/v1"
-  model: auto
-  max_tokens: 2048
-  temperature: 0.7
+  # Primary endpoint: LM Studio on Prometheus. Override with LM_STUDIO_API_BASE.
+  api_base: "http://127.0.0.1:1234/v1"
+  api_key: ${LM_API_TOKEN}
+  model: qwen-agentworld-35b-a3b
+  fallbacks:
+    # Secondary endpoint: LM Studio on Stormbreaker/Windows.
+    # Override with STORMBREAKER_LM_STUDIO_API_BASE or WINDOWS_LM_STUDIO_API_BASE.
+    - name: stormbreaker-lm-studio
+      api_base: "http://192.168.4.48:1234/v1"
+      api_key: ${STORMBREAKER_LM_STUDIO_API_KEY}
+      model: qwen-agentworld-35b-a3b
+  max_tokens: 512
+  temperature: 0.2
   context_limit: 32000
+
+# Overlay / web chat server
+server:
+  port: 4343
+
+# Machine identity
+machine:
+  canonical_name: Prometheus
+  role: Prometheus / Local Mac / Yennefer-Codex surface
+  macos_reported_computer_name: "Al's MacBook Pro"
+  macos_reported_local_hostname: Als-MacBook-Pro.local
+  tailscale_dns: als-macbook-pro.taild13a57.ts.net
+  mac_hosts:
+    current: Prometheus
+    outgoing: Firestarter
+  windows_hosts:
+    - Stormbreaker
+  invalid_aliases:
+    - Stonebreaker
+  not_this_host:
+    - Firestarter
+    - firestarter
+    - Stormbreaker
+    - Stonebreaker
+
+# Local knowledge base
+vault:
+  path: /Users/alsharma/Documents/ai/obsidian-vault
 
 # Logging
 logging:
