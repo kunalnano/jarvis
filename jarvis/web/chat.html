@@ -19,6 +19,35 @@
       background:linear-gradient(90deg,#c9a9ff,var(--accent)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
   .sub{ color:var(--muted); font-size:12px; }
   .spacer{ flex:1; }
+  .pet-capsule{ min-width:230px; max-width:360px; height:46px; padding:5px 14px 5px 6px; border-radius:999px;
+                display:flex; align-items:center; gap:10px; border:1px solid rgba(211,200,232,.18);
+                background:linear-gradient(180deg,rgba(39,35,49,.82),rgba(18,15,24,.88));
+                box-shadow:0 16px 38px rgba(0,0,0,.34), inset 0 1px 0 rgba(255,255,255,.08);
+                color:#f4efff; overflow:hidden; }
+  .pet-core{ flex:0 0 34px; width:34px; height:34px; border-radius:50%; display:grid; place-items:center;
+             background:radial-gradient(circle at 34% 28%,#f5ebff 0 10%,#a855f7 34%,#392051 72%);
+             box-shadow:0 0 16px rgba(168,85,247,.48); }
+  .pet-eye{ width:13px; height:5px; border-radius:999px; background:#12091d; box-shadow:13px 0 0 #12091d; transform:translateX(-6px); }
+  .pet-copy{ min-width:0; display:flex; flex-direction:column; line-height:1.2; }
+  .pet-label{ font-size:12px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .pet-detail{ color:#bcb2cb; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .pet-wave{ flex:0 0 auto; display:flex; align-items:center; gap:3px; height:18px; }
+  .pet-wave i{ display:block; width:3px; height:7px; border-radius:999px; background:#6ee7b7; opacity:.55; }
+  .pet-wave i:nth-child(2){ height:13px; } .pet-wave i:nth-child(3){ height:9px; }
+  .pet-capsule.mood-listening{ border-color:rgba(110,231,183,.34); }
+  .pet-capsule.mood-listening .pet-core{ background:radial-gradient(circle at 34% 28%,#f1fff8 0 10%,#34d399 36%,#173f35 72%); box-shadow:0 0 18px rgba(52,211,153,.5); }
+  .pet-capsule.mood-thinking{ border-color:rgba(196,181,253,.34); }
+  .pet-capsule.mood-thinking .pet-core{ animation:think 1.4s ease-in-out infinite; }
+  .pet-capsule.mood-speaking .pet-wave i{ animation:w 860ms ease-in-out infinite; opacity:1; }
+  .pet-capsule.mood-speaking .pet-wave i:nth-child(2){ animation-delay:120ms; } .pet-capsule.mood-speaking .pet-wave i:nth-child(3){ animation-delay:240ms; }
+  .pet-capsule.mood-needs{ border-color:rgba(251,191,36,.45); }
+  .pet-capsule.mood-needs .pet-core{ background:radial-gradient(circle at 34% 28%,#fff7d6 0 10%,#f59e0b 36%,#4b2a0d 72%); box-shadow:0 0 18px rgba(245,158,11,.55); }
+  .pet-capsule.mood-degraded,.pet-capsule.mood-warn{ border-color:rgba(251,146,60,.48); }
+  .pet-capsule.mood-degraded .pet-core,.pet-capsule.mood-warn .pet-core{ background:radial-gradient(circle at 34% 28%,#fff1df 0 10%,#fb923c 36%,#4a1f12 72%); box-shadow:0 0 18px rgba(251,146,60,.5); }
+  .pet-capsule.mood-offline{ border-color:rgba(248,113,113,.5); }
+  .pet-capsule.mood-offline .pet-core{ background:radial-gradient(circle at 34% 28%,#ffe9e9 0 10%,#f87171 36%,#4a141b 72%); box-shadow:0 0 18px rgba(248,113,113,.48); }
+  @keyframes w{ 0%,100%{ transform:scaleY(.55); opacity:.45; } 45%{ transform:scaleY(1.45); opacity:1; } }
+  @keyframes think{ 0%,100%{ transform:scale(.96); } 50%{ transform:scale(1.04); } }
   .toggle{ display:flex; align-items:center; gap:7px; color:var(--muted); font-size:12px; cursor:pointer; user-select:none; }
   .toggle input{ accent-color:var(--accent); }
   .voice-state{ display:flex; align-items:center; gap:10px; padding:9px 20px; border-bottom:1px solid var(--line);
@@ -61,6 +90,10 @@
   textarea:focus{ outline:0; border-color:var(--accent2); }
   .send{ background:linear-gradient(90deg,var(--accent2),var(--accent)); padding:12px 20px; border-radius:12px; }
   .send:disabled{ opacity:.5; cursor:default; }
+  @media (max-width:760px){
+    header{ flex-wrap:wrap; }
+    .pet-capsule{ order:3; width:100%; max-width:none; }
+  }
 </style>
 </head>
 <body>
@@ -68,6 +101,14 @@
     <div class="dot" id="status"></div>
     <div><h1>Yennefer</h1><div class="sub">local presence · LM Studio · on your Mac</div></div>
     <div class="spacer"></div>
+    <div class="pet-capsule mood-idle" id="petCapsule" aria-live="polite">
+      <div class="pet-core"><div class="pet-eye"></div></div>
+      <div class="pet-copy">
+        <div class="pet-label" id="petLabel">Idle</div>
+        <div class="pet-detail" id="petDetail">Yennefer is ready</div>
+      </div>
+      <div class="pet-wave" aria-hidden="true"><i></i><i></i><i></i></div>
+    </div>
     <label class="toggle"><input type="checkbox" id="voice" checked> speak replies</label>
   </header>
   <div class="voice-state" id="voiceState" hidden>
@@ -95,6 +136,9 @@ const voiceEngine = document.getElementById('voiceEngine');
 const voiceSummary = document.getElementById('voiceSummary');
 const voiceProbe = document.getElementById('voiceProbe');
 const voiceReload = document.getElementById('voiceReload');
+const petCapsule = document.getElementById('petCapsule');
+const petLabel = document.getElementById('petLabel');
+const petDetail = document.getElementById('petDetail');
 
 function el(cls, html){ const d=document.createElement('div'); d.className=cls; if(html!==undefined) d.innerHTML=html; return d; }
 function esc(s){ return (s||'').replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
@@ -102,6 +146,23 @@ function stamp(){
   return new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
 }
 function scroll(){ log.scrollTop = 0; }
+function setPetMood(mood, label, detail){
+  petCapsule.className = 'pet-capsule mood-' + (mood || 'idle');
+  petLabel.textContent = label || 'Idle';
+  petDetail.textContent = detail || 'Yennefer is ready';
+}
+function renderPetStatus(d){
+  if(!d){ return; }
+  setPetMood(d.mood, d.label, d.detail);
+}
+async function refreshPetStatus(){
+  try{
+    const r = await fetch('/api/pet/status');
+    renderPetStatus(await r.json());
+  }catch(e){
+    setPetMood('offline', 'Offline', 'Backend is unreachable');
+  }
+}
 
 function bubble(who, text){
   const entry = el('entry ' + (who==='you'?'user':'yenn'));
@@ -126,6 +187,7 @@ function unthink(){ const t=document.getElementById('thinking'); if(t) t.remove(
 
 async function post(payload){
   thinking();
+  setPetMood('thinking', 'Thinking', 'Working on it');
   try{
     const r = await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const d = await r.json();
@@ -134,6 +196,7 @@ async function post(payload){
     if(d.reply) bubble('yenn', d.reply);
     if(d.pending) confirmCard(d.pending);
     refreshVoiceStatus();
+    refreshPetStatus();
   }catch(e){ unthink(); bubble('yenn','(I lost the connection to my backend.)'); }
 }
 function confirmCard(p){
@@ -181,6 +244,7 @@ async function refreshVoiceStatus(probe=false){
   try{
     const r = await fetch('/api/voice/status' + (probe ? '?probe=true' : ''));
     renderVoiceStatus(await r.json());
+    refreshPetStatus();
   }catch(e){
     voiceState.hidden = false;
     voiceState.className = 'voice-state warn';
@@ -191,6 +255,7 @@ async function refreshVoiceStatus(probe=false){
 }
 async function reloadChatterbox(){
   voiceReload.disabled = true;
+  setPetMood('listening', 'Checking voice', 'Reloading Chatterbox');
   try{
     const r = await fetch('/api/voice/reload-chatterbox',{method:'POST'});
     const d = await r.json();
@@ -201,6 +266,7 @@ async function reloadChatterbox(){
     bubble('yenn','I could not reload Chatterbox from here.');
   }finally{
     voiceReload.disabled = false;
+    refreshPetStatus();
   }
 }
 sendBtn.onclick = send;
@@ -210,6 +276,8 @@ box.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preve
 box.addEventListener('input', ()=>{ box.style.height='auto'; box.style.height=Math.min(box.scrollHeight,140)+'px'; });
 bubble('yenn', "I'm here. Ask me something, or tell me to do something — check status, open an app, look at a repo, run one of your agents.");
 refreshVoiceStatus();
+refreshPetStatus();
+setInterval(refreshPetStatus, 4000);
 box.focus();
 </script>
 </body>

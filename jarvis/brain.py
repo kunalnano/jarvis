@@ -308,6 +308,7 @@ class Brain:
 
     async def initialize(self):
         """Initialize LM Studio connection."""
+        self.last_endpoint_errors = []
         async with httpx.AsyncClient() as client:
             for endpoint in self.endpoints:
                 try:
@@ -318,9 +319,15 @@ class Brain:
                     )
                     response.raise_for_status()
                 except httpx.ConnectError:
+                    self.last_endpoint_errors.append(f"{endpoint['name']}: unavailable")
                     console.print(f"[yellow]LM Studio unreachable ({endpoint['name']} at {endpoint['api_base']})[/yellow]")
                     continue
+                except httpx.HTTPStatusError as e:
+                    self.last_endpoint_errors.append(f"{endpoint['name']}: HTTP {e.response.status_code}")
+                    console.print(f"[yellow]LM Studio endpoint failed ({endpoint['name']}): {e}[/yellow]")
+                    continue
                 except Exception as e:
+                    self.last_endpoint_errors.append(f"{endpoint['name']}: {type(e).__name__}")
                     console.print(f"[yellow]LM Studio endpoint failed ({endpoint['name']}): {e}[/yellow]")
                     continue
 
@@ -330,6 +337,7 @@ class Brain:
                         if self.model == 'auto':
                             self.model = models[0].get('id', 'local-model')
                     self._activate_endpoint(endpoint)
+                    self.last_endpoint_errors = []
                     console.print(f"[green]✓[/green] LM Studio connected ({self.model}, {endpoint['name']})")
                     console.print(f"[dim]Context: {self.context_limit:,} tokens available[/dim]")
                     return True

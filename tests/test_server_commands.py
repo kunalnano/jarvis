@@ -48,6 +48,58 @@ def test_voice_status_endpoint_reports_runtime_voice(monkeypatch):
     assert "ElevenLabs/11" in payload["fallback_warning"]
 
 
+def test_pet_status_endpoint_reports_capsule_contract(tmp_path, monkeypatch):
+    state_path = tmp_path / "state.json"
+    state_path.write_text('{"hand":"up","opener":"summoned from overlay"}', encoding="utf-8")
+    monkeypatch.setattr(server, "YENNEFER_STATE_PATH", state_path)
+    monkeypatch.setattr(server, "PET_PENDING_ACTION", None)
+    monkeypatch.setattr(server, "MODEL_READY", True)
+    monkeypatch.setattr(server, "SPEECH_WORKER", None)
+    monkeypatch.setattr(server, "SPEECH_NEXT", None)
+    monkeypatch.setattr(server.VOICE, "runtime_status", lambda: {
+        "engine": "chatterbox",
+        "preferred_engine": "chatterbox",
+        "degraded": False,
+        "fallback_warning": "",
+    })
+    monkeypatch.setattr(server.BRAIN, "model", "local-model")
+    monkeypatch.setattr(server.BRAIN, "api_base", "http://127.0.0.1:1234/v1")
+    monkeypatch.setattr(server.BRAIN, "active_endpoint", {"name": "prometheus-lm-studio"})
+    monkeypatch.setattr(server.BRAIN, "last_endpoint_errors", [])
+
+    response = TestClient(app).get("/api/pet/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mood"] == "listening"
+    assert payload["label"] == "Listening"
+    assert payload["hand"]["opener"] == "summoned from overlay"
+    assert payload["voice"]["engine"] == "chatterbox"
+    assert payload["capsule"]["class_name"] == "pet-capsule mood-listening"
+
+
+def test_pet_status_reports_pending_action_as_attention_state(monkeypatch):
+    monkeypatch.setattr(server, "PET_PENDING_ACTION", {"name": "run_shell", "args": {"cmd": "date"}})
+    monkeypatch.setattr(server, "SPEECH_WORKER", None)
+    monkeypatch.setattr(server, "SPEECH_NEXT", None)
+    monkeypatch.setattr(server.VOICE, "runtime_status", lambda: {
+        "engine": "chatterbox",
+        "preferred_engine": "chatterbox",
+        "degraded": False,
+        "fallback_warning": "",
+    })
+    monkeypatch.setattr(server.BRAIN, "last_endpoint_errors", ["prometheus-lm-studio: unavailable"])
+
+    response = TestClient(app).get("/api/pet/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mood"] == "needs"
+    assert payload["label"] == "Needs approval"
+    assert payload["pending_action"]["name"] == "run_shell"
+    assert payload["capsule"]["pulse"] is True
+
+
 def test_reload_chatterbox_endpoint_promotes_voice(monkeypatch):
     async def fake_promote(probe_audio=False):
         assert probe_audio is True

@@ -12,7 +12,7 @@ Run:  python -m jarvis.server     (then open the printed URL)
 import json
 import asyncio
 import re
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -34,6 +34,9 @@ PLAYBOOKS = PlaybookEngine(CONFIG)
 WEB = Path(__file__).parent / "web"
 SPEECH_WORKER: asyncio.Task | None = None
 SPEECH_NEXT: str | None = None
+PET_PENDING_ACTION: dict | None = None
+MODEL_READY = False
+YENNEFER_STATE_PATH = Path.home() / ".yennefer" / "state.json"
 CONVERSATION_TURN_LIMIT = 12
 CONVERSATION_MESSAGE_LIMIT = CONVERSATION_TURN_LIMIT * 3
 
@@ -551,13 +554,135 @@ def _queue_speech(text: str):
     _start_speech_worker()
 
 
+def _iso_from_mtime(path: Path) -> str | None:
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+    except OSError:
+        return None
+
+
+def _read_yennefer_state() -> dict:
+    state = {
+        "available": False,
+        "path": str(YENNEFER_STATE_PATH),
+        "hand": "idle",
+        "opener": "",
+        "updated_at": None,
+    }
+    try:
+        raw = json.loads(YENNEFER_STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return state
+
+    state["available"] = True
+    state["hand"] = str(raw.get("hand") or "idle")
+    state["opener"] = str(raw.get("opener") or "")
+    state["updated_at"] = _iso_from_mtime(YENNEFER_STATE_PATH)
+    return state
+
+
+def _speech_status() -> dict:
+    active = bool(SPEECH_WORKER and not SPEECH_WORKER.done())
+    return {
+        "speaking": active,
+        "queued": bool(SPEECH_NEXT),
+    }
+
+
+def _model_status() -> dict:
+    endpoint = getattr(BRAIN, "active_endpoint", {}) or {}
+    return {
+        "model": BRAIN.model,
+        "endpoint": BRAIN.api_base,
+        "endpoint_name": endpoint.get("name") or BRAIN.api_base,
+        "ready": MODEL_READY,
+        "last_errors": list(BRAIN.last_endpoint_errors[-3:]),
+    }
+
+
+def _pending_action_status() -> dict | None:
+    if not PET_PENDING_ACTION:
+        return None
+    name = str(PET_PENDING_ACTION.get("name") or "action")
+    args = PET_PENDING_ACTION.get("args") or {}
+    try:
+        args_json = json.dumps(args, sort_keys=True)
+    except TypeError:
+        args_json = str(args)
+    return {
+        "name": name,
+        "args": args,
+        "summary": f"{name} awaiting approval",
+        "detail": args_json[:240],
+    }
+
+
+def _pet_mood(hand_state: dict, voice: dict, speech: dict, pending: dict | None, model: dict) -> str:
+    if pending:
+        return "needs"
+    if speech["speaking"] or speech["queued"]:
+        return "speaking"
+    if voice.get("degraded") or voice.get("fallback_warning"):
+        return "degraded"
+    if hand_state.get("hand") == "up":
+        return "listening"
+    if not model.get("ready") or model.get("last_errors"):
+        return "warn"
+    return "idle"
+
+
+def _pet_copy(mood: str, hand_state: dict, voice: dict, pending: dict | None, model: dict) -> tuple[str, str]:
+    if mood == "needs" and pending:
+        return "Needs approval", pending["summary"]
+    if mood == "speaking":
+        return "Speaking", "Local voice is active"
+    if mood == "degraded":
+        warning = voice.get("fallback_warning") or voice.get("degraded_reason") or "Voice fallback active"
+        return "Voice fallback", warning
+    if mood == "listening":
+        opener = hand_state.get("opener") or "Hand raised"
+        return "Listening", opener
+    if mood == "warn":
+        errors = model.get("last_errors") or []
+        return "Model warning", errors[0] if errors else "Local model startup check failed"
+    return "Idle", "Yennefer is ready"
+
+
+async def _pet_status(probe_voice: bool = False) -> dict:
+    voice = await VOICE.runtime_status_async(probe_chatterbox=probe_voice) if probe_voice else VOICE.runtime_status()
+    hand_state = _read_yennefer_state()
+    speech = _speech_status()
+    model = _model_status()
+    pending = _pending_action_status()
+    mood = _pet_mood(hand_state, voice, speech, pending, model)
+    label, detail = _pet_copy(mood, hand_state, voice, pending, model)
+    return {
+        "name": "Yennefer",
+        "mood": mood,
+        "label": label,
+        "detail": detail,
+        "backend": {"available": True},
+        "hand": hand_state,
+        "voice": voice,
+        "model": model,
+        "speech": speech,
+        "pending_action": pending,
+        "capsule": {
+            "class_name": f"pet-capsule mood-{mood}",
+            "pulse": mood in {"listening", "speaking", "needs"},
+        },
+    }
+
+
 async def _complete(messages, with_tools=True, max_tokens: int | None = None):
+    global MODEL_READY
     payload = {"model": BRAIN.model, "messages": messages,
                "temperature": BRAIN.temperature, "max_tokens": max_tokens or BRAIN.max_tokens, "stream": False}
     if with_tools:
         payload["tools"] = tools.openai_tools()
         payload["tool_choice"] = "auto"
     data = await BRAIN.chat_completion(payload, timeout=120.0)
+    MODEL_READY = True
     return data["choices"][0]["message"]
 
 
@@ -610,8 +735,9 @@ async def _summarise_action(name, args, result, speak, user_message: str | None 
 
 @app.on_event("startup")
 async def _startup():
+    global MODEL_READY
     await VOICE.initialize()
-    await BRAIN.initialize()
+    MODEL_READY = await BRAIN.initialize()
     await PLAYBOOKS.start()
 
 
@@ -633,6 +759,11 @@ async def voice_status(probe: bool = False):
     return JSONResponse(await VOICE.runtime_status_async(probe_chatterbox=probe))
 
 
+@app.get("/api/pet/status")
+async def pet_status(probe_voice: bool = False):
+    return JSONResponse(await _pet_status(probe_voice=probe_voice))
+
+
 @app.post("/api/voice/reload-chatterbox")
 async def reload_chatterbox_voice():
     return JSONResponse(await VOICE.try_promote_chatterbox(probe_audio=True))
@@ -645,9 +776,11 @@ async def commands():
 
 @app.post("/api/chat")
 async def chat(body: ChatIn):
+    global PET_PENDING_ACTION
     actions = []
 
     if body.confirm:
+        PET_PENDING_ACTION = None
         name, args = body.confirm.get("name"), body.confirm.get("args", {})
         result = await tools.execute(name, args, CONFIG)
         actions.append({"tool": name, "args": args, "result": result[:1500]})
@@ -655,6 +788,7 @@ async def chat(body: ChatIn):
         return JSONResponse({"reply": reply, "actions": actions})
 
     if body.decline:
+        PET_PENDING_ACTION = None
         playbook_result = await PLAYBOOKS.handle_chat("later")
         reply = playbook_result["reply"] if playbook_result else "As you wish. I'll leave it."
         _remember("assistant", reply)
@@ -718,8 +852,9 @@ async def chat(body: ChatIn):
             actions.append({"tool": name, "args": args, "result": result[:1500]})
             reply = await _summarise_action(name, args, result, body.speak)
             return JSONResponse({"reply": reply, "actions": actions})
+        PET_PENDING_ACTION = {"name": name, "args": args}
         return JSONResponse({"reply": f"That one needs your go-ahead. Shall I run {name}?",
-                             "pending": {"name": name, "args": args}, "actions": actions})
+                             "pending": PET_PENDING_ACTION, "actions": actions})
 
     reply = _text(msg)
     if _looks_incomplete(reply):
