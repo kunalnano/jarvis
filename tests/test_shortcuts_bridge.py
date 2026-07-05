@@ -28,6 +28,15 @@ class FakeState:
                 "status": "next_action",
                 "next_action": {"identifier": "DAR-42", "title": "HELM Native v1"},
             },
+            "backlog_curator": {
+                "status": "dry_run_promotions_ready",
+                "actions": [
+                    {
+                        "issue": {"identifier": "DAR-77", "title": "Backlog curator"},
+                        "classification": "promote:todo",
+                    }
+                ],
+            },
         }
 
 
@@ -100,6 +109,18 @@ def test_pm_next_requires_bearer_and_returns_pm_packet(tmp_path):
     assert response.status_code == 200
     assert response.json()["pm"]["status"] == "next_action"
     assert response.json()["pm"]["next_action"]["identifier"] == "DAR-42"
+
+
+def test_pm_backlog_review_requires_bearer_and_returns_curator_packet(tmp_path):
+    client, _ = make_client(tmp_path)
+
+    assert client.get("/pm/backlog-review").status_code == 401
+    response = client.get("/pm/backlog-review", headers=auth())
+
+    assert response.status_code == 200
+    curator = response.json()["backlog_curator"]
+    assert curator["status"] == "dry_run_promotions_ready"
+    assert curator["actions"][0]["issue"]["identifier"] == "DAR-77"
 
 
 def test_limit_voice_reply_is_three_sentences():

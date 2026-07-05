@@ -94,6 +94,19 @@ resources:
   local_fallback: queued
   champion_model: qwen-agentworld-35b-a3b
 
+# Local PM / curator guardrails
+pm:
+  timezone: America/Chicago
+  weekend_mode: auto
+  weekend_personal_projects:
+    - Yennefer
+    - HELM
+  worker_capacity: 3
+  backlog_curator:
+    enabled: true
+    dry_run: true
+    batch_size: 8
+
 # Logging
 logging:
   level: INFO
