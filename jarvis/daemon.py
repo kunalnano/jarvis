@@ -15,6 +15,7 @@ from .voice import Voice
 from .brain import Brain
 from .presence import Presence
 from .playbooks import PlaybookEngine
+from .resource_conductor import ResourceConductor
 from .config import load_config
 
 console = Console()
@@ -30,6 +31,7 @@ class YenneferDaemon:
         self.speech_lock = asyncio.Lock()
         self.presence = Presence(config, self.brain, self.voice, self.speech_lock)
         self.playbooks = PlaybookEngine(config)
+        self.resources = ResourceConductor(config)
         self._stop = asyncio.Event()
 
     async def run(self):
@@ -60,9 +62,11 @@ class YenneferDaemon:
 
         await self.presence.start()
         await self.playbooks.start()
+        await self.resources.start()
         console.print("[green]Yennefer ambient daemon running (headless).[/green]")
 
         await self._stop.wait()
+        await self.resources.stop()
         await self.playbooks.stop()
         await self.presence.stop()
         self.voice.cleanup()

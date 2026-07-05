@@ -82,6 +82,18 @@ machine:
 vault:
   path: /Users/alsharma/Documents/ai/obsidian-vault
 
+# Local-first resource conductor
+resources:
+  enabled: true
+  interval_seconds: 300
+  registry_path: /Users/alsharma/Documents/ai/obsidian-vault/dvc/operating-model/DVC Machine & Agent Registry.md
+  state_path: ~/.yennefer/state.json
+  tally_dir: ~/.yennefer/resources
+  queue_dir: ~/.yennefer/resource-queue
+  vault_rag_url: http://127.0.0.1:8742
+  local_fallback: queued
+  champion_model: qwen-agentworld-35b-a3b
+
 # Logging
 logging:
   level: INFO

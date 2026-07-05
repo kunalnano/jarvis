@@ -16,6 +16,8 @@ from typing import Awaitable, Callable
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
+from .resource_conductor import ResourceConductor, merge_resources_line
+
 DEFAULT_BRIEFS_DIR = "~/Documents/ai/obsidian-vault/dvc/yennefer/briefs"
 
 
@@ -76,9 +78,14 @@ def latest_brief_text(config: dict) -> str:
     except IndexError:
         return ""
     try:
-        return latest.read_text(encoding="utf-8")
+        brief = latest.read_text(encoding="utf-8")
     except Exception:
         return ""
+    sc = (config or {}).get("shortcuts", {}) or {}
+    if sc.get("include_resources_line", True):
+        line = ResourceConductor(config).resources_line()
+        return merge_resources_line(brief, line)
+    return brief
 
 
 def limit_voice_reply(text: str, max_sentences: int = 3) -> str:
