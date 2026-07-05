@@ -66,6 +66,7 @@ def test_brief_today_requires_bearer_and_returns_latest_brief(tmp_path):
     assert response.status_code == 200
     assert "## THE ONE THING" in response.text
     assert "Ship the bridge." in response.text
+    assert "RESOURCES:" in response.text
 
 
 def test_ask_returns_three_sentence_voice_reply(tmp_path):
