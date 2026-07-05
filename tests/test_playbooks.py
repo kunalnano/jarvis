@@ -4,7 +4,9 @@ import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 
-from jarvis.playbooks import LinearIssue, PlaybookEngine, parse_playbooks
+import pytest
+
+from jarvis.playbooks import LinearBoardClient, LinearIssue, LinearUnavailable, PlaybookEngine, parse_playbooks
 
 
 NOW = datetime(2026, 6, 13, 16, 40, tzinfo=timezone.utc)
@@ -29,10 +31,15 @@ EVIDENCE: tickets with AUTHORED stamps citing PB-2.
 
 
 class FakeLinear:
-    def __init__(self, chair_calls=None, queue_eligible=None):
+    def __init__(self, chair_calls=None, queue_eligible=None, backlog=None, in_progress=None):
         self.chair_calls = chair_calls or []
         self.queue_eligible = queue_eligible or []
+        self.backlog = backlog or []
+        self.in_progress = in_progress or []
         self.created = []
+        self.comments = []
+        self.updates = []
+        self.validations = []
         self.calls = []
 
     async def list_chair_call_issues(self, older_than):
@@ -42,6 +49,14 @@ class FakeLinear:
     async def list_queue_eligible_issues(self):
         self.calls.append(("queue", None))
         return self.queue_eligible
+
+    async def list_backlog_issues(self, limit=50):
+        self.calls.append(("backlog", limit))
+        return self.backlog[:limit]
+
+    async def list_in_progress_issues(self):
+        self.calls.append(("active", None))
+        return self.in_progress
 
     async def create_needs_spec_issue(self, title, description, team, project=None):
         self.created.append({
@@ -58,6 +73,15 @@ class FakeLinear:
             priority=0,
             project=project or "",
         )
+
+    async def comment_on_issue(self, issue_id, body):
+        self.comments.append((issue_id, body))
+
+    async def update_issue_state(self, issue_id, target_state, add_labels=(), remove_labels=()):
+        self.updates.append((issue_id, target_state, add_labels, remove_labels))
+
+    async def validate_issue_states(self, state_names):
+        self.validations.append(tuple(state_names))
 
 
 class FakeNotifier:
@@ -98,11 +122,46 @@ def load_state(engine):
     return json.loads(engine.state.path.read_text(encoding="utf-8"))
 
 
+class StubLinearClient(LinearBoardClient):
+    def __init__(self, responses, team="Darkvectorcognition"):
+        super().__init__(api_key="test", team=team)
+        self.responses = responses
+        self.calls = []
+
+    async def _graphql(self, query, variables=None):
+        self.calls.append((query, variables or {}))
+        return self.responses.pop(0)
+
+
+class FailingStateFakeLinear(FakeLinear):
+    async def validate_issue_states(self, state_names):
+        self.validations.append(tuple(state_names))
+        raise LinearUnavailable("Linear workflow state not found: Todo")
+
+
 def test_parses_playbook_opener():
     playbooks = parse_playbooks(PLAYBOOKS_MD)
     assert playbooks["PB-1"].name == "Chair-Call Shepherd"
     assert playbooks["PB-1"].opener.startswith("Two decisions are waiting")
     assert "draft up to 3" in playbooks["PB-2"].pre_authorized
+
+
+def test_linear_client_fails_closed_when_team_state_is_missing():
+    client = StubLinearClient([
+        {
+            "teams": {
+                "nodes": [
+                    {"id": "team-dar", "name": "Darkvectorcognition", "key": "DAR"}
+                ]
+            }
+        },
+        {"workflowStates": {"nodes": []}},
+    ])
+
+    with pytest.raises(LinearUnavailable, match="workflow state not found"):
+        asyncio.run(client.update_issue_state("issue-1", "Todo"))
+
+    assert client.calls[1][1]["teamId"] == "team-dar"
 
 
 def test_pb1_chair_call_hand_up_writes_state(tmp_path):
@@ -182,6 +241,215 @@ def test_pb2_drafts_needs_spec_candidates_without_ranking(tmp_path):
     assert len(state["drafts"]) == len(fake.created)
     assert all(draft["priority"] == 0 for draft in state["drafts"])
     assert all("needs-spec" in draft["labels"] for draft in state["drafts"])
+
+
+def test_backlog_curator_dry_run_promotes_safe_backlog_without_linear_writes(tmp_path):
+    fake = FakeLinear(
+        chair_calls=[],
+        backlog=[
+            LinearIssue(
+                id="issue-77",
+                identifier="DAR-77",
+                title="Backlog curator",
+                state="Backlog",
+                state_type="backlog",
+                labels=("spec-driven", "council", "lift-M"),
+                priority=1,
+                project="Yennefer",
+            )
+        ],
+        queue_eligible=[],
+    )
+    engine = make_engine(tmp_path, fake)
+
+    result = asyncio.run(engine.evaluate_once())
+    state = load_state(engine)
+
+    assert result["status"] == "backlog_curator_dry_run_promotions_ready"
+    assert result["playbook_id"] == "PB-3"
+    assert fake.comments == []
+    assert fake.updates == []
+    assert fake.calls == [("chair", NOW - timedelta(hours=24)), ("backlog", 8), ("active", None)]
+    curator = state["backlog_curator"]
+    assert curator["status"] == "dry_run_promotions_ready"
+    assert curator["preempted_pm"] is True
+    assert curator["actions"][0]["classification"] == "promote:todo"
+    assert curator["actions"][0]["target_state"] == "Todo"
+    assert "Backlog Curator review" in curator["actions"][0]["audit_comment"]
+    assert "DAR-77" in open(curator["packet_path"], encoding="utf-8").read()
+
+
+def test_repeated_backlog_curator_dry_run_does_not_starve_pm_next(tmp_path):
+    backlog_issue = LinearIssue(
+        id="issue-77",
+        identifier="DAR-77",
+        title="Backlog curator",
+        state="Backlog",
+        state_type="backlog",
+        labels=("spec-driven", "council", "lift-M"),
+        priority=1,
+        project="Yennefer",
+    )
+    next_issue = LinearIssue(
+        id="issue-42",
+        identifier="DAR-42",
+        title="HELM Native v1",
+        state="Todo",
+        state_type="unstarted",
+        labels=("spec-driven", "council"),
+        priority=2,
+        project="HELM",
+    )
+    fake = FakeLinear(
+        chair_calls=[],
+        backlog=[backlog_issue],
+        queue_eligible=[next_issue],
+    )
+    engine = make_engine(tmp_path, fake)
+
+    first = asyncio.run(engine.evaluate_once())
+    second = asyncio.run(engine.evaluate_once())
+    state = load_state(engine)
+
+    assert first["status"] == "backlog_curator_dry_run_promotions_ready"
+    assert second["status"] == "pm_next_action"
+    assert second["next"] == "DAR-42"
+    assert state["backlog_curator"]["status"] == "dry_run_promotions_ready"
+    assert state["backlog_curator"]["preempted_pm"] is False
+    assert state["pm"]["next_action"]["identifier"] == "DAR-42"
+
+
+def test_backlog_curator_applies_promotions_and_preserves_labels(tmp_path):
+    fake = FakeLinear(
+        chair_calls=[],
+        backlog=[
+            LinearIssue(
+                id="issue-40",
+                identifier="DAR-40",
+                title="Resource conductor",
+                state="Backlog",
+                state_type="backlog",
+                labels=("spec-driven", "council", "lift-M"),
+                priority=1,
+                project="Yennefer",
+            )
+        ],
+    )
+    engine = make_engine(tmp_path, fake)
+    engine.backlog_curator_dry_run = False
+
+    result = asyncio.run(engine.evaluate_once())
+    state = load_state(engine)
+
+    assert result["status"] == "backlog_curator_applied"
+    assert fake.validations == [("Todo",)]
+    assert fake.comments[0][0] == "issue-40"
+    assert "Classification: `promote:todo`" in fake.comments[0][1]
+    assert "Labels preserved: spec-driven, council, lift-M" in fake.comments[0][1]
+    assert fake.updates == [("issue-40", "Todo", (), ())]
+    assert state["backlog_curator"]["actions"][0]["applied"] is True
+
+
+def test_backlog_curator_preflights_target_state_before_commenting(tmp_path):
+    fake = FailingStateFakeLinear(
+        chair_calls=[],
+        backlog=[
+            LinearIssue(
+                id="issue-40",
+                identifier="DAR-40",
+                title="Resource conductor",
+                state="Backlog",
+                state_type="backlog",
+                labels=("spec-driven", "council", "lift-M"),
+                priority=1,
+                project="Yennefer",
+            )
+        ],
+    )
+    engine = make_engine(tmp_path, fake)
+    engine.backlog_curator_dry_run = False
+
+    result = asyncio.run(engine.evaluate_once())
+
+    assert result["status"] == "linear_unavailable"
+    assert fake.validations == [("Todo",)]
+    assert fake.comments == []
+    assert fake.updates == []
+
+
+def test_backlog_curator_refuses_needs_spec_and_full_capacity_auto_start(tmp_path):
+    fake = FakeLinear()
+    engine = make_engine(tmp_path, fake)
+    active = [
+        LinearIssue(id=f"active-{idx}", identifier=f"DAR-{idx}", title="Active")
+        for idx in range(3)
+    ]
+
+    actions = engine._classify_backlog(
+        [
+            LinearIssue(
+                id="needs-spec",
+                identifier="DAR-72",
+                title="Research stub",
+                state="Backlog",
+                labels=("needs-spec", "council"),
+                priority=1,
+                project="Yennefer",
+            ),
+            LinearIssue(
+                id="auto",
+                identifier="DAR-80",
+                title="Worker-ready bridge",
+                state="Backlog",
+                labels=("spec-driven", "council", "worker-ready"),
+                priority=1,
+                project="Yennefer",
+            ),
+        ],
+        active,
+        NOW,
+    )
+
+    by_id = {action.issue.identifier: action for action in actions}
+    assert by_id["DAR-72"].classification == "hold:needs_spec"
+    assert by_id["DAR-72"].target_state == ""
+    assert by_id["DAR-80"].classification == "hold:capacity"
+    assert by_id["DAR-80"].target_state == ""
+
+
+def test_backlog_curator_allows_only_one_auto_start(tmp_path):
+    fake = FakeLinear()
+    engine = make_engine(tmp_path, fake)
+
+    actions = engine._classify_backlog(
+        [
+            LinearIssue(
+                id="auto-1",
+                identifier="DAR-80",
+                title="Bridge",
+                state="Backlog",
+                labels=("spec-driven", "council", "worker-ready"),
+                priority=1,
+                project="Yennefer",
+            ),
+            LinearIssue(
+                id="auto-2",
+                identifier="DAR-81",
+                title="QA lane",
+                state="Backlog",
+                labels=("spec-driven", "council", "worker-ready"),
+                priority=1,
+                project="Yennefer",
+            ),
+        ],
+        [],
+        NOW,
+    )
+
+    assert actions[0].classification == "promote:in_progress"
+    assert actions[0].target_state == "In Progress"
+    assert actions[1].classification == "hold:capacity"
+    assert actions[1].target_state == ""
 
 
 def test_pm_governor_writes_next_action_and_worker_handoff(tmp_path):

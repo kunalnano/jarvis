@@ -15,7 +15,7 @@ import os
 import random
 import re
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
@@ -87,8 +87,19 @@ class LinearIssue:
     state: str = ""
     state_type: str = ""
     labels: tuple[str, ...] = ()
+    label_ids: tuple[str, ...] = ()
     priority: int = 0
     project: str = ""
+
+
+@dataclass(frozen=True)
+class CuratorAction:
+    issue: LinearIssue
+    classification: str
+    reason: str
+    target_state: str = ""
+    audit_comment: str = ""
+    applied: bool = False
 
 
 class LinearUnavailable(RuntimeError):
@@ -101,6 +112,8 @@ class LinearBoardClient:
     def __init__(self, api_key: str | None = None, team: str | None = None):
         self.api_key = api_key if api_key is not None else os.environ.get("LINEAR_API_KEY")
         self.team = team
+        self._state_id_cache: dict[str, str] = {}
+        self._team_id_cache: str | None = None
 
     async def _graphql(self, query: str, variables: dict | None = None) -> dict:
         if not self.api_key:
@@ -122,9 +135,11 @@ class LinearBoardClient:
         return payload.get("data") or {}
 
     async def list_chair_call_issues(self, older_than: datetime) -> list[LinearIssue]:
+        team_id = await self._team_id()
         query = """
-        query YenneferChairCalls($first: Int!) {
+        query YenneferChairCalls($first: Int!, $teamId: String!) {
           issues(first: $first, filter: {
+            team: { id: { eq: $teamId } }
             labels: { name: { eq: "chair-call" } }
             state: { type: { neq: "completed" } }
           }) {
@@ -138,14 +153,16 @@ class LinearBoardClient:
           }
         }
         """
-        data = await self._graphql(query, {"first": 50})
+        data = await self._graphql(query, {"first": 50, "teamId": team_id})
         issues = [_issue(node) for node in _nodes(data, "issues")]
         return [issue for issue in issues if _parse_ts(issue.created_at) <= older_than]
 
     async def list_queue_eligible_issues(self) -> list[LinearIssue]:
+        team_id = await self._team_id()
         query = """
-        query YenneferQueueCandidates($first: Int!) {
+        query YenneferQueueCandidates($first: Int!, $teamId: String!) {
           issues(first: $first, filter: {
+            team: { id: { eq: $teamId } }
             state: { type: { nin: ["completed", "canceled"] } }
           }) {
             nodes {
@@ -158,9 +175,51 @@ class LinearBoardClient:
           }
         }
         """
-        data = await self._graphql(query, {"first": 100})
+        data = await self._graphql(query, {"first": 100, "teamId": team_id})
         issues = [_issue(node) for node in _nodes(data, "issues")]
         return [issue for issue in issues if _queue_eligible(issue)]
+
+    async def list_backlog_issues(self, limit: int = 50) -> list[LinearIssue]:
+        team_id = await self._team_id()
+        query = """
+        query YenneferBacklogIssues($first: Int!, $teamId: String!) {
+          issues(first: $first, filter: {
+            team: { id: { eq: $teamId } }
+            state: { type: { eq: "backlog" } }
+          }) {
+            nodes {
+              id identifier title url createdAt updatedAt priority
+              dueDate
+              state { name type }
+              project { name }
+              labels { nodes { id name } }
+            }
+          }
+        }
+        """
+        data = await self._graphql(query, {"first": int(limit), "teamId": team_id})
+        return [_issue(node) for node in _nodes(data, "issues")]
+
+    async def list_in_progress_issues(self, limit: int = 50) -> list[LinearIssue]:
+        team_id = await self._team_id()
+        query = """
+        query YenneferInProgressIssues($first: Int!, $teamId: String!) {
+          issues(first: $first, filter: {
+            team: { id: { eq: $teamId } }
+            state: { type: { eq: "started" } }
+          }) {
+            nodes {
+              id identifier title url createdAt updatedAt priority
+              dueDate
+              state { name type }
+              project { name }
+              labels { nodes { id name } }
+            }
+          }
+        }
+        """
+        data = await self._graphql(query, {"first": int(limit), "teamId": team_id})
+        return [_issue(node) for node in _nodes(data, "issues")]
 
     async def create_needs_spec_issue(
         self,
@@ -213,6 +272,112 @@ class LinearBoardClient:
         }
         """
         await self._graphql(query, {"issueId": issue_id, "body": body})
+
+    async def update_issue_state(
+        self,
+        issue_id: str,
+        target_state: str,
+        add_labels: tuple[str, ...] = (),
+        remove_labels: tuple[str, ...] = (),
+    ) -> None:
+        state_id = await self._workflow_state_id(target_state)
+        issue_input: dict = {"stateId": state_id}
+        if add_labels or remove_labels:
+            current = await self._issue_label_ids(issue_id)
+            add_ids = await self._label_ids_by_name(add_labels)
+            remove_ids = await self._label_ids_by_name(remove_labels)
+            final = (set(current) | set(add_ids.values())) - set(remove_ids.values())
+            issue_input["labelIds"] = sorted(final)
+        query = """
+        mutation YenneferUpdateIssue($issueId: String!, $input: IssueUpdateInput!) {
+          issueUpdate(id: $issueId, input: $input) { success }
+        }
+        """
+        await self._graphql(query, {"issueId": issue_id, "input": issue_input})
+
+    async def validate_issue_states(self, state_names: tuple[str, ...]) -> None:
+        for state_name in tuple(dict.fromkeys(state for state in state_names if state)):
+            await self._workflow_state_id(state_name)
+
+    async def _workflow_state_id(self, state_name: str) -> str:
+        cache_key = state_name.strip().lower()
+        if cache_key in self._state_id_cache:
+            return self._state_id_cache[cache_key]
+        team_id = await self._team_id()
+        query = """
+        query YenneferWorkflowState($name: String!, $teamId: String!) {
+          workflowStates(first: 100, filter: {
+            team: { id: { eq: $teamId } }
+            name: { eq: $name }
+          }) {
+            nodes { id name team { name key } }
+          }
+        }
+        """
+        data = await self._graphql(query, {"name": state_name, "teamId": team_id})
+        states = _nodes(data, "workflowStates")
+        if states:
+            self._state_id_cache[cache_key] = str(states[0]["id"])
+            return self._state_id_cache[cache_key]
+        raise LinearUnavailable(f"Linear workflow state not found: {state_name}")
+
+    async def _team_id(self) -> str:
+        if self._team_id_cache:
+            return self._team_id_cache
+        if not self.team:
+            raise LinearUnavailable("Linear team is not configured")
+        query = """
+        query YenneferTeams($first: Int!) {
+          teams(first: $first) {
+            nodes { id name key }
+          }
+        }
+        """
+        data = await self._graphql(query, {"first": 250})
+        wanted = self.team.lower()
+        for team in _nodes(data, "teams"):
+            if wanted in {
+                str(team.get("name") or "").lower(),
+                str(team.get("key") or "").lower(),
+            }:
+                self._team_id_cache = str(team["id"])
+                return self._team_id_cache
+        raise LinearUnavailable(f"Linear team not found: {self.team}")
+
+    async def _issue_label_ids(self, issue_id: str) -> tuple[str, ...]:
+        query = """
+        query YenneferIssueLabels($issueId: String!) {
+          issue(id: $issueId) {
+            labels { nodes { id name } }
+          }
+        }
+        """
+        data = await self._graphql(query, {"issueId": issue_id})
+        labels = (((data.get("issue") or {}).get("labels") or {}).get("nodes") or [])
+        return tuple(str(label.get("id") or "") for label in labels if label.get("id"))
+
+    async def _label_ids_by_name(self, names: tuple[str, ...]) -> dict[str, str]:
+        clean = tuple(dict.fromkeys(name.strip() for name in names if name.strip()))
+        if not clean:
+            return {}
+        query = """
+        query YenneferLabelIds($first: Int!) {
+          issueLabels(first: $first) {
+            nodes { id name }
+          }
+        }
+        """
+        data = await self._graphql(query, {"first": 250})
+        wanted = {name.lower() for name in clean}
+        result = {}
+        for label in _nodes(data, "issueLabels"):
+            name = str(label.get("name") or "")
+            if name.lower() in wanted and label.get("id"):
+                result[name] = str(label["id"])
+        missing = [name for name in clean if name.lower() not in {key.lower() for key in result}]
+        if missing:
+            raise LinearUnavailable(f"Linear labels not found: {', '.join(missing)}")
+        return result
 
 
 class ShortcutNotifier:
@@ -353,6 +518,11 @@ class PlaybookEngine:
             )
             if str(word).strip()
         )
+        curator = pm.get("backlog_curator", {}) or {}
+        self.backlog_curator_enabled = bool(curator.get("enabled", True))
+        self.backlog_curator_dry_run = bool(curator.get("dry_run", True))
+        self.backlog_curator_batch_size = int(curator.get("batch_size", 8))
+        self.worker_capacity = int(pm.get("worker_capacity", curator.get("worker_capacity", 3)))
         self._tasks: list[asyncio.Task] = []
 
     async def start(self) -> None:
@@ -416,6 +586,33 @@ class PlaybookEngine:
             data["last_evaluated_at"] = isoformat(now)
             self.state.save(data)
             return {"status": "hand_up", "playbook_id": "PB-1"}
+
+        if self.backlog_curator_enabled:
+            try:
+                backlog = await self.client.list_backlog_issues(self.backlog_curator_batch_size)
+                active_lanes = await self.client.list_in_progress_issues()
+            except LinearUnavailable as exc:
+                data["last_error"] = f"Linear unavailable: {exc}"
+                data["last_evaluated_at"] = isoformat(now)
+                self.state.save(data)
+                return {"status": "linear_unavailable"}
+            try:
+                curator_result = await self._run_backlog_curator(
+                    playbooks.get("PB-3", fallback_playbook("PB-3")),
+                    backlog,
+                    active_lanes,
+                    data,
+                    now,
+                )
+            except LinearUnavailable as exc:
+                data["last_error"] = f"Linear unavailable: {exc}"
+                data["last_evaluated_at"] = isoformat(now)
+                self.state.save(data)
+                return {"status": "linear_unavailable"}
+            if curator_result:
+                data["last_evaluated_at"] = isoformat(now)
+                self.state.save(data)
+                return curator_result
 
         try:
             queue_eligible = await self.client.list_queue_eligible_issues()
@@ -543,6 +740,263 @@ class PlaybookEngine:
         data["hand_up"] = _overlay_hand_up(hand_up)
         await self._notify_hand_up(data, hand_up, now)
         return {"status": "drafted", "playbook_id": "PB-2", "drafted": len(created)}
+
+    async def _run_backlog_curator(
+        self,
+        playbook: Playbook,
+        backlog: list[LinearIssue],
+        active_lanes: list[LinearIssue],
+        data: dict,
+        now: datetime,
+    ) -> dict | None:
+        if not backlog:
+            data["backlog_curator"] = {
+                "status": "empty",
+                "playbook_id": "PB-3",
+                "last_reviewed_at": isoformat(now),
+                "backlog_count": 0,
+                "active_lanes": len(active_lanes),
+                "dry_run": self.backlog_curator_dry_run,
+                "actions": [],
+            }
+            return None
+
+        actions = self._classify_backlog(backlog, active_lanes, now)
+        packet_path = self._write_curator_packet(actions, active_lanes, now)
+        promotable = [action for action in actions if action.target_state]
+        signature = _curator_signature(actions)
+        previous_signature = (data.get("backlog_curator") or {}).get("preempt_signature")
+        applied = 0
+        if promotable and not self.backlog_curator_dry_run:
+            await self.client.validate_issue_states(
+                tuple(action.target_state for action in promotable)
+            )
+            applied_ids = set()
+            for action in promotable:
+                await self.client.comment_on_issue(action.issue.id, action.audit_comment)
+                await self.client.update_issue_state(action.issue.id, action.target_state)
+                applied += 1
+                applied_ids.add(action.issue.id)
+            actions = [
+                replace(action, applied=True) if action.issue.id in applied_ids else action
+                for action in actions
+            ]
+
+        snapshot = {
+            "status": "review_ready" if promotable else "reviewed_no_promotions",
+            "playbook_id": "PB-3",
+            "playbook_name": playbook.name,
+            "last_reviewed_at": isoformat(now),
+            "dry_run": self.backlog_curator_dry_run,
+            "backlog_count": len(backlog),
+            "active_lanes": len(active_lanes),
+            "worker_capacity": self.worker_capacity,
+            "packet_path": str(packet_path),
+            "promotable_count": len(promotable),
+            "applied_count": applied,
+            "preempt_signature": signature,
+            "actions": [_curator_action_packet(action) for action in actions],
+        }
+        if promotable and self.backlog_curator_dry_run:
+            snapshot["status"] = "dry_run_promotions_ready"
+        elif applied:
+            snapshot["status"] = "applied"
+        repeated_dry_run = (
+            bool(promotable)
+            and self.backlog_curator_dry_run
+            and previous_signature == signature
+        )
+        snapshot["preempted_pm"] = bool(promotable and not repeated_dry_run)
+        data["backlog_curator"] = snapshot
+        data.setdefault("events", []).append({
+            "ts": isoformat(now),
+            "playbook_id": "PB-3",
+            "event": snapshot["status"],
+            "promotable_count": len(promotable),
+            "applied_count": applied,
+            "preempted_pm": snapshot["preempted_pm"],
+        })
+        if promotable and not repeated_dry_run:
+            return {
+                "status": f"backlog_curator_{snapshot['status']}",
+                "playbook_id": "PB-3",
+                "promotable_count": len(promotable),
+                "applied_count": applied,
+                "dry_run": self.backlog_curator_dry_run,
+                "packet_path": str(packet_path),
+            }
+        return None
+
+    def _classify_backlog(
+        self,
+        backlog: list[LinearIssue],
+        active_lanes: list[LinearIssue],
+        now: datetime,
+    ) -> list[CuratorAction]:
+        ranked = sorted(backlog, key=_queue_rank)
+        active_count = len(active_lanes)
+        auto_start_used = False
+        actions = []
+        weekend = self._weekend_personal_pass(now)
+        for issue in ranked:
+            action, active_count, auto_start_used = self._classify_backlog_issue(
+                issue,
+                active_count,
+                auto_start_used,
+                weekend,
+                now,
+            )
+            actions.append(action)
+        return actions
+
+    def _classify_backlog_issue(
+        self,
+        issue: LinearIssue,
+        active_count: int,
+        auto_start_used: bool,
+        weekend: bool,
+        now: datetime,
+    ) -> tuple[CuratorAction, int, bool]:
+        labels = {label.lower() for label in issue.labels}
+        if weekend and not _is_weekend_personal_issue(
+            issue,
+            self.weekend_personal_projects,
+            self.weekend_personal_keywords,
+        ):
+            return (
+                self._curator_action(
+                    issue,
+                    "hold:weekend",
+                    "Weekend personal pass is active; this card is not in the weekend-safe project or keyword set.",
+                    now,
+                ),
+                active_count,
+                auto_start_used,
+            )
+        if "needs-spec" in labels:
+            return (
+                self._curator_action(
+                    issue,
+                    "hold:needs_spec",
+                    "Protected needs-spec label is present; curator cannot make it queue eligible.",
+                    now,
+                ),
+                active_count,
+                auto_start_used,
+            )
+        if "chair-call" in labels:
+            return (
+                self._curator_action(
+                    issue,
+                    "hold:chair_call",
+                    "Chair-call label requires explicit chair decision before promotion.",
+                    now,
+                ),
+                active_count,
+                auto_start_used,
+            )
+        if "blocked" in labels or issue.state.lower() == "blocked":
+            return (
+                self._curator_action(
+                    issue,
+                    "hold:blocked",
+                    "Blocked cards stay out of worker queue until evidence clears the blocker.",
+                    now,
+                ),
+                active_count,
+                auto_start_used,
+            )
+        if "spec-driven" not in labels or "council" not in labels or issue.priority == 0:
+            return (
+                self._curator_action(
+                    issue,
+                    "hold:needs_spec",
+                    "Promotion requires spec-driven and council labels plus a nonzero priority.",
+                    now,
+                ),
+                active_count,
+                auto_start_used,
+            )
+
+        wants_auto_start = bool(labels & {"auto-start", "start-now", "worker-ready"})
+        if wants_auto_start:
+            if auto_start_used or active_count >= self.worker_capacity:
+                return (
+                    self._curator_action(
+                        issue,
+                        "hold:capacity",
+                        "Auto-start requested, but worker capacity is full or this pass already selected one starter.",
+                        now,
+                    ),
+                    active_count,
+                    auto_start_used,
+                )
+            active_count += 1
+            auto_start_used = True
+            return (
+                self._curator_action(
+                    issue,
+                    "promote:in_progress",
+                    "Spec-driven council card is worker-ready and capacity is available.",
+                    now,
+                    target_state="In Progress",
+                ),
+                active_count,
+                auto_start_used,
+            )
+
+        return (
+            self._curator_action(
+                issue,
+                "promote:todo",
+                "Spec-driven council card is unblocked and safe to make queue eligible.",
+                now,
+                target_state="Todo",
+            ),
+            active_count,
+            auto_start_used,
+        )
+
+    def _curator_action(
+        self,
+        issue: LinearIssue,
+        classification: str,
+        reason: str,
+        now: datetime,
+        target_state: str = "",
+    ) -> CuratorAction:
+        action = CuratorAction(
+            issue=issue,
+            classification=classification,
+            reason=reason,
+            target_state=target_state,
+        )
+        return CuratorAction(
+            issue=issue,
+            classification=classification,
+            reason=reason,
+            target_state=target_state,
+            audit_comment=_curator_comment(action, now, self.backlog_curator_dry_run),
+        )
+
+    def _write_curator_packet(
+        self,
+        actions: list[CuratorAction],
+        active_lanes: list[LinearIssue],
+        now: datetime,
+    ) -> Path:
+        self.handoff_dir.mkdir(parents=True, exist_ok=True)
+        path = self.handoff_dir / f"{isoformat(now).replace(':', '').replace('Z', '')}-PB-3-backlog-curator.json"
+        payload = {
+            "created_at": isoformat(now),
+            "playbook_id": "PB-3",
+            "dry_run": self.backlog_curator_dry_run,
+            "worker_capacity": self.worker_capacity,
+            "active_lanes": [_issue_packet(issue) for issue in active_lanes],
+            "actions": [_curator_action_packet(action) for action in actions],
+        }
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return path
 
     def _run_pm_governor(
         self,
@@ -755,6 +1209,12 @@ def fallback_playbook(pb_id: str) -> Playbook:
             name="Queue Starvation",
             hand_up='"The belt is empty. I have three candidates worth ranking."',
         )
+    if pb_id == "PB-3":
+        return Playbook(
+            id="PB-3",
+            name="Backlog Curator",
+            hand_up='"I found backlog cards that are safe to promote; I have the audit trail ready."',
+        )
     return Playbook(id=pb_id, name=pb_id)
 
 
@@ -795,11 +1255,9 @@ def _parse_fields(body: str) -> dict[str, str]:
 
 def _issue(node: dict | None) -> LinearIssue:
     node = node or {}
-    labels = tuple(
-        str(label.get("name") or "")
-        for label in ((node.get("labels") or {}).get("nodes") or [])
-        if label.get("name")
-    )
+    label_nodes = ((node.get("labels") or {}).get("nodes") or [])
+    labels = tuple(str(label.get("name") or "") for label in label_nodes if label.get("name"))
+    label_ids = tuple(str(label.get("id") or "") for label in label_nodes if label.get("id"))
     state = node.get("state") or {}
     project = node.get("project") or {}
     return LinearIssue(
@@ -813,6 +1271,7 @@ def _issue(node: dict | None) -> LinearIssue:
         state=str(state.get("name") or node.get("state") or ""),
         state_type=str(state.get("type") or node.get("state_type") or ""),
         labels=labels,
+        label_ids=label_ids,
         priority=int(node.get("priority") or 0),
         project=str(project.get("name") or node.get("project") or ""),
     )
@@ -880,6 +1339,41 @@ def _issue_packet(issue: LinearIssue) -> dict:
         "priority": issue.priority,
         "project": issue.project,
     }
+
+
+def _curator_action_packet(action: CuratorAction) -> dict:
+    return {
+        "issue": _issue_packet(action.issue),
+        "classification": action.classification,
+        "reason": action.reason,
+        "target_state": action.target_state,
+        "audit_comment": action.audit_comment,
+        "applied": action.applied,
+    }
+
+
+def _curator_signature(actions: list[CuratorAction]) -> str:
+    parts = [
+        f"{action.issue.identifier}:{action.classification}:{action.target_state}"
+        for action in actions
+    ]
+    return "|".join(parts)
+
+
+def _curator_comment(action: CuratorAction, now: datetime, dry_run: bool) -> str:
+    issue = action.issue
+    target = action.target_state or "no state change"
+    mode = "dry-run proposal" if dry_run else "applied action"
+    labels = ", ".join(issue.labels) if issue.labels else "(none)"
+    return (
+        f"Backlog Curator review - {isoformat(now)}\n\n"
+        f"Mode: {mode}\n"
+        f"Classification: `{action.classification}`\n"
+        f"Proposed move: `{target}`\n"
+        f"Reason: {action.reason}\n"
+        f"Labels preserved: {labels}\n\n"
+        "Safety: Yennefer never marks Done, never merges, and never strips protected labels during this pass."
+    )
 
 
 def _overlay_hand_up(active: dict) -> dict:

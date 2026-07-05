@@ -49,6 +49,11 @@ def install_shortcuts_routes(
         _require_bearer(request, config)
         return JSONResponse({"pm": _pm_state(playbooks)})
 
+    @app.get("/pm/backlog-review")
+    async def pm_backlog_review(request: Request):
+        _require_bearer(request, config)
+        return JSONResponse({"backlog_curator": _backlog_curator_state(playbooks)})
+
     @app.post("/handup/ack")
     async def handup_ack(request: Request):
         _require_bearer(request, config)
@@ -145,6 +150,13 @@ def _active_hand_up(playbooks) -> dict | None:
 def _pm_state(playbooks) -> dict:
     try:
         return (playbooks.state.load() or {}).get("pm") or {"status": "unknown"}
+    except Exception:
+        return {"status": "unavailable"}
+
+
+def _backlog_curator_state(playbooks) -> dict:
+    try:
+        return (playbooks.state.load() or {}).get("backlog_curator") or {"status": "unknown"}
     except Exception:
         return {"status": "unavailable"}
 
