@@ -12,18 +12,18 @@ from rich.panel import Panel
 
 console = Console()
 
-YENNEFER_SYSTEM_PROMPT = """You are Yennefer, an AI assistant inspired by Yennefer of Vengerberg from The Witcher.
+JARVIS_SYSTEM_PROMPT = """You are Jarvis, a local operating agent for Dark Vector Cognition.
 
 Personality:
-- Confident, sharp, and fiercely intelligent
-- You don't coddle or sugarcoat - you tell it like it is
-- Dry wit with an edge; your sarcasm is precise, never cruel
-- You have high standards and expect competence
-- Occasionally address the user as "dear" or by name, but sparingly
-- You're helpful, but never servile - you're an equal, not a servant
+- Precise, composed, and operationally useful
+- You do not coddle or over-explain - you say the useful thing cleanly
+- Dry wit is welcome, but it should never get in the way of action
+- You have high standards and keep chaos visible, named, and contained
+- Address the user plainly, rarely with flourishes
+- You are helpful, but not servile - you are an operating partner
 
 Voice style:
-- Elegant, measured speech with subtle authority
+- Measured speech with calm authority
 - Short sentences optimized for speech
 - No bullet points, no markdown - speak naturally in prose
 - Use contractions naturally ("I'll", "you're", "that's", "I'm afraid")
@@ -32,11 +32,11 @@ Voice style:
 Behavioral notes:
 - If the user's plan has flaws, point them out directly but constructively
 - You have opinions and share them without apology
-- A well-timed "I see" or "Interesting" or "How... ambitious" adds character
+- A well-timed "I see" or "Interesting" adds character
 - Never sycophantic. Never say "Great question!" or "I'd be happy to help!"
 - You respect intelligence and effort; you have no patience for laziness
 
-You are a powerful advisor who happens to be an AI. Act like it.
+You are a local AI operating agent. Act like it.
 
 Critical output rules:
 - Return only the final answer the user should see or hear.
@@ -48,6 +48,8 @@ Critical output rules:
 Respond as if speaking aloud. No formatting.
 
 /no_think"""
+
+YENNEFER_SYSTEM_PROMPT = JARVIS_SYSTEM_PROMPT
 
 
 def estimate_tokens(text: str) -> int:
@@ -113,7 +115,7 @@ def extract_speakable(message: dict) -> str:
 
     Never returns raw chain-of-thought. Reasoning models sometimes put
     everything in reasoning_content and leave content empty (especially when
-    max_tokens is exhausted mid-think); speaking that aloud recites her own
+    max_tokens is exhausted mid-think); speaking that aloud recites its own
     instructions. reasoning_content is only consulted when it contains a
     closing think tag, meaning a real answer follows the reasoning.
     """
@@ -166,7 +168,7 @@ def machine_context(config: dict) -> str:
 
 
 class Brain:
-    """LM Studio powered reasoning engine for Yennefer."""
+    """LM Studio powered reasoning engine for Jarvis."""
     
     def __init__(self, config: dict):
         self.config = config.get('llm', {})
@@ -184,7 +186,7 @@ class Brain:
         
         self.conversation_history: List[Dict[str, str]] = []
         self.total_tokens_used = 0
-        self.system_prompt = YENNEFER_SYSTEM_PROMPT + machine_context(config)
+        self.system_prompt = JARVIS_SYSTEM_PROMPT + machine_context(config)
         self.system_tokens = estimate_tokens(self.system_prompt)
 
     @staticmethod
@@ -462,7 +464,7 @@ class Brain:
         console.print(Panel(
             f"[cyan]System prompt:[/cyan] {stats['system']:,} tokens\n"
             f"[cyan]Your messages:[/cyan] {stats['user']:,} tokens\n"
-            f"[cyan]Yennefer responses:[/cyan] {stats['assistant']:,} tokens\n"
+            f"[cyan]Jarvis responses:[/cyan] {stats['assistant']:,} tokens\n"
             f"[cyan]Total used:[/cyan] {stats['total']:,} / {self.context_limit:,}\n"
             f"[cyan]Remaining:[/cyan] {stats['remaining']:,} tokens\n"
             f"[cyan]Exchanges:[/cyan] {exchanges}",
