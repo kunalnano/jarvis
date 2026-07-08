@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import httpx
 from fastapi.testclient import TestClient
@@ -156,6 +157,66 @@ def test_agent_status_probe_timeout_returns_cached_voice(monkeypatch):
     assert "Deep voice probe timed out" in payload["detail"]
     assert "voice_probe_timeout" in payload["needs_attention"]
     assert payload["status"] == "attention"
+
+
+def test_capture_endpoint_persists_local_inbox(monkeypatch, tmp_path):
+    monkeypatch.setitem(server.CONFIG, "capture", {"inbox_dir": str(tmp_path)})
+
+    response = TestClient(app).post(
+        "/api/capture",
+        json={
+            "text": "Remind me to review LOCAL-156 with Siri",
+            "source": "siri-app-intent",
+            "context": {"surface": "shortcuts"},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["reply"].startswith("Captured as")
+    assert payload["item"]["source"] == "siri-app-intent"
+    assert payload["item"]["classification"]["label"] in {"task", "agent_request"}
+    assert payload["item"]["side_effects_performed"] == []
+    assert payload["capture"]["today_count"] == 1
+
+    files = list(tmp_path.glob("*.jsonl"))
+    assert len(files) == 1
+    saved = json.loads(files[0].read_text(encoding="utf-8").strip())
+    assert saved["text"] == "Remind me to review LOCAL-156 with Siri"
+
+    inbox = TestClient(app).get("/api/capture/inbox?limit=5")
+    assert inbox.status_code == 200
+    assert inbox.json()["captures"][0]["id"] == payload["item"]["id"]
+
+
+def test_agent_status_includes_capture_summary(monkeypatch, tmp_path):
+    monkeypatch.setitem(server.CONFIG, "capture", {"inbox_dir": str(tmp_path)})
+    server._store_capture("Capture this from Siri", source="siri-app-intent")
+
+    async def fake_voice_status(probe_chatterbox=False):
+        return {
+            "engine": "chatterbox",
+            "preferred_engine": "chatterbox",
+            "initialized": True,
+            "degraded": False,
+            "fallback_warning": "",
+        }
+
+    monkeypatch.setattr(server.VOICE, "runtime_status_async", fake_voice_status)
+    monkeypatch.setattr(server.BRAIN, "last_endpoint_errors", [])
+    monkeypatch.setattr(
+        server.PLAYBOOKS.state,
+        "load",
+        lambda: {"active": None, "queue": [], "drafts": [], "events": [], "paused": False},
+    )
+
+    response = TestClient(app).get("/api/agent/status")
+
+    assert response.status_code == 200
+    capture = response.json()["capture"]
+    assert capture["inbox_dir"] == str(tmp_path)
+    assert capture["today_count"] == 1
+    assert capture["last_item"]["source"] == "siri-app-intent"
 
 
 def test_reload_chatterbox_endpoint_promotes_voice(monkeypatch):

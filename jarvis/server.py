@@ -12,11 +12,12 @@ Run:  python -m jarvis.server     (then open the printed URL)
 import json
 import asyncio
 import re
+import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -143,6 +144,13 @@ class ChatIn(BaseModel):
     decline: bool = False
 
 
+class CaptureIn(BaseModel):
+    text: str
+    source: str = "siri"
+    speak: bool = False
+    context: dict | None = None
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -236,6 +244,116 @@ def _agent_resource_status() -> dict:
         "state_path": _expanded_path(resources.get("state_path") or playbooks.get("state_path")),
         "vault_rag_url": resources.get("vault_rag_url") or "",
         "champion_model": resources.get("champion_model") or BRAIN.model,
+    }
+
+
+def _capture_dir() -> Path:
+    capture = CONFIG.get("capture", {}) or {}
+    return Path(str(capture.get("inbox_dir") or "~/.yennefer/captures")).expanduser()
+
+
+def _capture_file(day: str | None = None) -> Path:
+    day = day or date.today().isoformat()
+    return _capture_dir() / f"{day}.jsonl"
+
+
+def _classify_capture(text: str) -> dict:
+    lower = text.lower()
+    if "?" in text or re.match(r"\s*(what|why|how|who|when|where|should|can|could|would)\b", lower):
+        label = "question"
+        reason = "looks like a question"
+    elif re.search(r"\b(agent|codex|yennefer|siri|run|build|debug|fix|ship|ticket)\b", lower):
+        label = "agent_request"
+        reason = "mentions agent or execution language"
+    elif re.search(r"\b(remind|todo|to-do|follow up|schedule|book|send|email|call|need to)\b", lower):
+        label = "task"
+        reason = "looks like a task or reminder"
+    elif re.search(r"\b(meeting|call with|prep|brief|agenda)\b", lower):
+        label = "meeting_note"
+        reason = "mentions meeting context"
+    else:
+        label = "note"
+        reason = "general captured note"
+    return {
+        "label": label,
+        "reason": reason,
+        "requires_confirmation_before_side_effects": True,
+    }
+
+
+def _capture_ack(item: dict) -> str:
+    label = item.get("classification", {}).get("label") or "note"
+    if label == "agent_request":
+        return "Captured as an agent request. I will hold it for review before taking action."
+    if label == "task":
+        return "Captured as a task. I will hold it in the Yennefer inbox for review."
+    if label == "question":
+        return "Captured as a question. I will keep it in the Yennefer inbox."
+    return "Captured. I will keep it in the Yennefer inbox."
+
+
+def _store_capture(text: str, source: str = "siri", context: dict | None = None) -> dict:
+    cleaned = " ".join((text or "").split())
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="capture text is required")
+    now = _utc_now()
+    item = {
+        "id": f"cap-{now.replace(':', '').replace('-', '').replace('.', '')}-{uuid.uuid4().hex[:8]}",
+        "captured_at": now,
+        "source": source or "siri",
+        "text": cleaned,
+        "classification": _classify_capture(cleaned),
+        "context": context or {},
+        "side_effects_performed": [],
+        "next_action": "review_in_yennefer_inbox",
+    }
+    path = _capture_file(now[:10])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(item, sort_keys=True) + "\n")
+    item["inbox_path"] = str(path)
+    return item
+
+
+def _load_captures(limit: int = 20) -> list[dict]:
+    limit = max(1, min(int(limit or 20), 100))
+    inbox = _capture_dir()
+    if not inbox.exists():
+        return []
+    items = []
+    for path in sorted(inbox.glob("*.jsonl"), reverse=True):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in reversed(lines):
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            item.setdefault("inbox_path", str(path))
+            items.append(item)
+            if len(items) >= limit:
+                return items
+    return items
+
+
+def _capture_status() -> dict:
+    today_path = _capture_file()
+    today_count = 0
+    if today_path.exists():
+        try:
+            today_count = sum(1 for line in today_path.read_text(encoding="utf-8").splitlines() if line.strip())
+        except OSError:
+            today_count = 0
+    recent = _load_captures(limit=1)
+    return {
+        "enabled": True,
+        "inbox_dir": str(_capture_dir()),
+        "today_count": today_count,
+        "last_item": recent[0] if recent else None,
     }
 
 
@@ -344,6 +462,7 @@ async def _agent_status_packet(probe: bool = False) -> dict:
     resources = _agent_resource_status()
     permissions = _agent_permission_status()
     speech = _speech_status()
+    capture = _capture_status()
     needs_attention = _agent_needs_attention(voice, playbooks, model)
     hard_needs = {"voice_uninitialized", "voice_degraded", "lmstudio_last_errors"}
     status = "ready"
@@ -375,6 +494,7 @@ async def _agent_status_packet(probe: bool = False) -> dict:
         "permissions": permissions,
         "playbooks": playbooks,
         "resources": resources,
+        "capture": capture,
         "needs_attention": needs_attention,
     }
 
@@ -889,6 +1009,27 @@ async def reload_chatterbox_voice():
 @app.get("/api/commands")
 async def commands():
     return JSONResponse({"commands": COMMANDS})
+
+
+@app.post("/api/capture")
+async def capture(body: CaptureIn):
+    item = _store_capture(body.text, source=body.source, context=body.context)
+    reply = _capture_ack(item)
+    if body.speak:
+        _queue_speech(reply)
+    return JSONResponse({
+        "reply": reply,
+        "item": item,
+        "capture": _capture_status(),
+    })
+
+
+@app.get("/api/capture/inbox")
+async def capture_inbox(limit: int = 20):
+    return JSONResponse({
+        "inbox_dir": str(_capture_dir()),
+        "captures": _load_captures(limit=limit),
+    })
 
 
 @app.post("/api/chat")
