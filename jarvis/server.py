@@ -1,8 +1,8 @@
 """
-Yennefer chat server - a web chat box with hands.
+Jarvis chat server - a web chat box with hands.
 
 FastAPI backend that serves a chat UI and runs an LLM tool-calling loop against
-LM Studio. Yennefer can answer, and she can invoke registered tools/agents on
+LM Studio. Jarvis can answer, and it can invoke registered tools/agents on
 the Mac. Safe tools auto-run; side-effectful ones return a confirmation request
 the UI must approve before they execute.
 
@@ -60,16 +60,16 @@ COMMANDS = [
     {
         "id": "capabilities",
         "name": "Capabilities",
-        "description": "Show what Yennefer can do right now.",
+        "description": "Show what Jarvis can do right now.",
         "trigger": "what can you do",
         "tool": "capabilities",
         "args": {},
     },
     {
-        "id": "yennefer-doctor",
-        "name": "Yennefer Doctor",
+        "id": "jarvis-doctor",
+        "name": "Jarvis Doctor",
         "description": "Check and repair backend, overlay, voice, and LM Studio failover.",
-        "trigger": "repair yennefer services",
+        "trigger": "repair jarvis services",
         "tool": "yennefer_doctor",
         "args": {"repair": True},
     },
@@ -106,17 +106,17 @@ COMMANDS = [
         "args": {"query": "Lisbon"},
     },
     {
-        "id": "git-yennefer",
-        "name": "Yennefer Git Status",
-        "description": "Show git status for the Yennefer backend.",
+        "id": "git-jarvis",
+        "name": "Jarvis Backend Git Status",
+        "description": "Show git status for the Jarvis backend.",
         "trigger": "show git status for /Users/alsharma/Projects/yennefer",
         "tool": "git_status",
         "args": {"path": "/Users/alsharma/Projects/yennefer"},
     },
     {
-        "id": "git-yennefer-overlay",
-        "name": "Overlay Git Status",
-        "description": "Show git status for the Yennefer overlay.",
+        "id": "git-jarvis-overlay",
+        "name": "Jarvis Overlay Git Status",
+        "description": "Show git status for the Jarvis overlay.",
         "trigger": "show git status for /Users/alsharma/Projects/yennefer-overlay",
         "tool": "git_status",
         "args": {"path": "/Users/alsharma/Projects/yennefer-overlay"},
@@ -134,7 +134,7 @@ SYSTEM = (
 )
 
 HISTORY = [{"role": "system", "content": SYSTEM}]
-app = FastAPI(title="Yennefer")
+app = FastAPI(title="Jarvis")
 
 
 class ChatIn(BaseModel):
@@ -262,7 +262,7 @@ def _classify_capture(text: str) -> dict:
     if "?" in text or re.match(r"\s*(what|why|how|who|when|where|should|can|could|would)\b", lower):
         label = "question"
         reason = "looks like a question"
-    elif re.search(r"\b(agent|codex|yennefer|siri|run|build|debug|fix|ship|ticket)\b", lower):
+    elif re.search(r"\b(agent|codex|jarvis|yennefer|siri|run|build|debug|fix|ship|ticket)\b", lower):
         label = "agent_request"
         reason = "mentions agent or execution language"
     elif re.search(r"\b(remind|todo|to-do|follow up|schedule|book|send|email|call|need to)\b", lower):
@@ -286,10 +286,10 @@ def _capture_ack(item: dict) -> str:
     if label == "agent_request":
         return "Captured as an agent request. I will hold it for review before taking action."
     if label == "task":
-        return "Captured as a task. I will hold it in the Yennefer inbox for review."
+        return "Captured as a task. I will hold it in the Jarvis inbox for review."
     if label == "question":
-        return "Captured as a question. I will keep it in the Yennefer inbox."
-    return "Captured. I will keep it in the Yennefer inbox."
+        return "Captured as a question. I will keep it in the Jarvis inbox."
+    return "Captured. I will keep it in the Jarvis inbox."
 
 
 def _store_capture(text: str, source: str = "siri", context: dict | None = None) -> dict:
@@ -305,7 +305,7 @@ def _store_capture(text: str, source: str = "siri", context: dict | None = None)
         "classification": _classify_capture(cleaned),
         "context": context or {},
         "side_effects_performed": [],
-        "next_action": "review_in_yennefer_inbox",
+        "next_action": "review_in_jarvis_inbox",
     }
     path = _capture_file(now[:10])
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -404,7 +404,7 @@ def _pet_compat_fields(
             voice.get("fallback_warning")
             or voice.get("degraded_reason")
             or "; ".join(model.get("last_errors") or [])
-            or "Yennefer needs a runtime check"
+            or "Jarvis needs a runtime check"
         )
     elif speech.get("speaking"):
         mood = "speaking"
@@ -472,8 +472,8 @@ async def _agent_status_packet(probe: bool = False) -> dict:
         status = "attention"
     base_url = _backend_base_url()
     return {
-        "agent_id": "yennefer",
-        "name": "Yennefer",
+        "agent_id": "jarvis",
+        "name": "Jarvis",
         "kind": "local_operating_agent",
         "role": "Local Mac presence for voice, chat, safe tools, approval-gated playbooks, and resource checks.",
         "status": status,
@@ -559,7 +559,7 @@ def _model_unavailable_reply(exc: Exception) -> str:
         return (
             "No LM Studio endpoint is ready: "
             + "; ".join(endpoint_errors[:3])
-            + ". Command actions still work; run 'repair yennefer services' for the recovery check."
+            + ". Command actions still work; run 'repair jarvis services' for the recovery check."
         )
     if isinstance(exc, httpx.HTTPStatusError):
         status = exc.response.status_code
@@ -770,10 +770,19 @@ def _intent_command(text: str) -> dict | None:
         return {
             "id": "capabilities",
             "name": "Capabilities",
-            "description": "Show what Yennefer can do right now.",
+            "description": "Show what Jarvis can do right now.",
             "trigger": text,
             "tool": "capabilities",
             "args": {},
+        }
+    if q in {"repair jarvis services", "repair yennefer services", "repair assistant services"}:
+        return {
+            "id": "jarvis-doctor",
+            "name": "Jarvis Doctor",
+            "description": "Check and repair backend, overlay, voice, and LM Studio failover.",
+            "trigger": text,
+            "tool": "yennefer_doctor",
+            "args": {"repair": True},
         }
     if url and any(word in q for word in ("read", "fetch", "summarize", "summarise", "look", "open", "page", "website", "url")):
         return {
@@ -1127,7 +1136,7 @@ async def chat(body: ChatIn):
 def main():
     import uvicorn
     port = int((CONFIG.get("server", {}) or {}).get("port", 4343))
-    print(f"Yennefer chat box -> http://127.0.0.1:{port}")
+    print(f"Jarvis chat box -> http://127.0.0.1:{port}")
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 
 

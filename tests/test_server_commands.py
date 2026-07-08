@@ -25,7 +25,7 @@ def test_api_commands_returns_overlay_palette_contract():
     assert commands
     assert {"id", "name", "description", "trigger"} <= set(commands[0])
     assert any(command["id"] == "status" for command in commands)
-    assert any(command["id"] == "yennefer-doctor" for command in commands)
+    assert any(command["id"] == "jarvis-doctor" for command in commands)
 
 
 def test_voice_status_endpoint_reports_runtime_voice(monkeypatch):
@@ -95,7 +95,7 @@ def test_agent_status_endpoint_reports_local_operating_packet(monkeypatch):
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["agent_id"] == "yennefer"
+    assert payload["agent_id"] == "jarvis"
     assert payload["kind"] == "local_operating_agent"
     assert payload["status"] == "attention"
     assert payload["version"] == server.__version__
@@ -116,7 +116,7 @@ def test_agent_status_endpoint_reports_local_operating_packet(monkeypatch):
     alias = TestClient(app).get("/api/pet/status")
     assert alias.status_code == 200
     alias_payload = alias.json()
-    assert alias_payload["agent_id"] == "yennefer"
+    assert alias_payload["agent_id"] == "jarvis"
     assert {"mood", "label", "detail", "speech"} <= set(alias_payload)
     assert probes == [True, False]
 
@@ -232,12 +232,32 @@ def test_reload_chatterbox_endpoint_promotes_voice(monkeypatch):
     assert response.json()["promoted"] is True
 
 
-def test_yennefer_doctor_command_invokes_repair_script(monkeypatch):
+def test_jarvis_doctor_command_invokes_repair_script(monkeypatch):
     calls = []
 
     async def fake_run(cmd, timeout=60.0, cwd=None):
         calls.append((cmd, timeout, cwd))
-        return "OK    Yennefer backend ready"
+        return "OK    Jarvis backend ready"
+
+    monkeypatch.setattr("jarvis.tools._run", fake_run)
+
+    response = TestClient(app).post(
+        "/api/chat",
+        json={"message": "repair jarvis services", "speak": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["command"] == "jarvis-doctor"
+    assert calls
+    assert calls[0][0][-1] == "--repair"
+
+
+def test_legacy_yennefer_doctor_phrase_still_routes(monkeypatch):
+    calls = []
+
+    async def fake_run(cmd, timeout=60.0, cwd=None):
+        calls.append((cmd, timeout, cwd))
+        return "OK    Jarvis backend ready"
 
     monkeypatch.setattr("jarvis.tools._run", fake_run)
 
@@ -247,9 +267,8 @@ def test_yennefer_doctor_command_invokes_repair_script(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert response.json()["command"] == "yennefer-doctor"
+    assert response.json()["command"] == "jarvis-doctor"
     assert calls
-    assert calls[0][0][-1] == "--repair"
 
 
 def test_check_system_status_uses_fast_command_path(monkeypatch):
