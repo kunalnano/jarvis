@@ -12,7 +12,7 @@ Run:  python -m jarvis.server     (then open the printed URL)
 import json
 import asyncio
 import re
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
+from . import __version__
 from .brain import Brain, extract_speakable
 from .voice import Voice
 from .config import load_config
@@ -36,6 +37,7 @@ SPEECH_WORKER: asyncio.Task | None = None
 SPEECH_NEXT: str | None = None
 CONVERSATION_TURN_LIMIT = 12
 CONVERSATION_MESSAGE_LIMIT = CONVERSATION_TURN_LIMIT * 3
+AGENT_VOICE_STATUS_TIMEOUT_SECONDS = 5.0
 
 COMMANDS = [
     {
@@ -139,6 +141,177 @@ class ChatIn(BaseModel):
     speak: bool = False
     confirm: dict | None = None
     decline: bool = False
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _expanded_path(value) -> str:
+    if not value:
+        return ""
+    return str(Path(str(value)).expanduser())
+
+
+def _backend_base_url() -> str:
+    server = CONFIG.get("server", {}) or {}
+    port = int(server.get("port") or 4343)
+    return f"http://127.0.0.1:{port}"
+
+
+def _public_endpoint(endpoint: dict | None) -> dict:
+    endpoint = endpoint or {}
+    return {
+        "name": endpoint.get("name") or "",
+        "api_base": endpoint.get("api_base") or "",
+        "model": endpoint.get("model") or BRAIN.model,
+    }
+
+
+def _agent_model_status() -> dict:
+    endpoint = getattr(BRAIN, "active_endpoint", {}) or {}
+    errors = list(getattr(BRAIN, "last_endpoint_errors", []) or [])
+    return {
+        "model": BRAIN.model,
+        "active_endpoint": _public_endpoint(endpoint),
+        "configured_endpoint_count": len(getattr(BRAIN, "endpoints", []) or []),
+        "last_errors": errors[:3],
+    }
+
+
+def _agent_permission_status() -> dict:
+    registry = getattr(tools, "REGISTRY", {}) or {}
+    safe = sorted(name for name, spec in registry.items() if spec.get("safe"))
+    gated = sorted(name for name, spec in registry.items() if not spec.get("safe"))
+    return {
+        "safe_tools_auto_run": True,
+        "side_effect_tools_require_confirmation": True,
+        "safe_tool_count": len(safe),
+        "gated_tool_count": len(gated),
+        "gated_tools": gated,
+    }
+
+
+def _agent_playbook_status() -> dict:
+    data = PLAYBOOKS.state.load()
+    active = data.get("active")
+    active_packet = None
+    if isinstance(active, dict):
+        active_packet = {
+            "id": active.get("id"),
+            "playbook_id": active.get("playbook_id"),
+            "playbook_name": active.get("playbook_name"),
+            "status": active.get("status"),
+            "message": active.get("opener") or active.get("message") or "",
+            "created_at": active.get("created_at"),
+            "approved_at": active.get("approved_at"),
+            "snooze_until": active.get("snooze_until"),
+        }
+    queue = data.get("queue") if isinstance(data.get("queue"), list) else []
+    drafts = data.get("drafts") if isinstance(data.get("drafts"), list) else []
+    events = data.get("events") if isinstance(data.get("events"), list) else []
+    return {
+        "enabled": bool(getattr(PLAYBOOKS, "enabled", False)),
+        "state_path": str(PLAYBOOKS.state.path),
+        "status": (active_packet or {}).get("status") or ("paused" if data.get("paused") else "idle"),
+        "active": bool(active_packet),
+        "active_hand_up": active_packet,
+        "queue_count": len(queue),
+        "draft_count": len(drafts),
+        "event_count": len(events),
+        "paused": bool(data.get("paused")),
+        "last_error": data.get("last_error") or "",
+        "updated_at": data.get("updated_at") or "",
+    }
+
+
+def _agent_resource_status() -> dict:
+    resources = CONFIG.get("resources", {}) or {}
+    playbooks = CONFIG.get("playbooks", {}) or {}
+    return {
+        "enabled": bool(resources.get("enabled", True)),
+        "registry_path": _expanded_path(resources.get("registry_path")),
+        "state_path": _expanded_path(resources.get("state_path") or playbooks.get("state_path")),
+        "vault_rag_url": resources.get("vault_rag_url") or "",
+        "champion_model": resources.get("champion_model") or BRAIN.model,
+    }
+
+
+def _agent_needs_attention(voice: dict, playbooks: dict, model: dict) -> list[str]:
+    needs = []
+    if not voice.get("initialized"):
+        needs.append("voice_uninitialized")
+    if voice.get("probe_timed_out"):
+        needs.append("voice_probe_timeout")
+    if voice.get("probe_error"):
+        needs.append("voice_probe_error")
+    if voice.get("degraded"):
+        needs.append("voice_degraded")
+    if voice.get("fallback_warning"):
+        needs.append("voice_fallback")
+    if playbooks.get("active"):
+        needs.append("playbook_waiting_for_chair")
+    if playbooks.get("last_error"):
+        needs.append("playbook_last_error")
+    if model.get("last_errors"):
+        needs.append("lmstudio_last_errors")
+    return needs
+
+
+async def _agent_voice_status(probe: bool = False) -> dict:
+    try:
+        return await asyncio.wait_for(
+            VOICE.runtime_status_async(probe_chatterbox=probe),
+            timeout=AGENT_VOICE_STATUS_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        status = VOICE.runtime_status()
+        status["probe_timed_out"] = True
+        return status
+    except Exception as exc:
+        status = VOICE.runtime_status()
+        status["probe_error"] = str(exc)
+        return status
+
+
+async def _agent_status_packet(probe: bool = False) -> dict:
+    voice = await _agent_voice_status(probe=probe)
+    model = _agent_model_status()
+    playbooks = _agent_playbook_status()
+    resources = _agent_resource_status()
+    permissions = _agent_permission_status()
+    needs_attention = _agent_needs_attention(voice, playbooks, model)
+    hard_needs = {"voice_uninitialized", "voice_degraded", "lmstudio_last_errors"}
+    status = "ready"
+    if any(need in hard_needs for need in needs_attention):
+        status = "degraded"
+    elif needs_attention:
+        status = "attention"
+    base_url = _backend_base_url()
+    return {
+        "agent_id": "yennefer",
+        "name": "Yennefer",
+        "kind": "local_operating_agent",
+        "role": "Local Mac presence for voice, chat, safe tools, approval-gated playbooks, and resource checks.",
+        "status": status,
+        "version": __version__,
+        "checked_at": _utc_now(),
+        "backend": {
+            "base_url": base_url,
+            "ui": f"{base_url}/",
+            "agent_status": f"{base_url}/api/agent/status",
+            "pet_status": f"{base_url}/api/pet/status",
+            "voice_status": f"{base_url}/api/voice/status",
+            "commands": f"{base_url}/api/commands",
+        },
+        "commands": [command["id"] for command in COMMANDS],
+        "model": model,
+        "voice": voice,
+        "permissions": permissions,
+        "playbooks": playbooks,
+        "resources": resources,
+        "needs_attention": needs_attention,
+    }
 
 
 def _convo():
@@ -631,6 +804,16 @@ async def index():
 @app.get("/api/voice/status")
 async def voice_status(probe: bool = False):
     return JSONResponse(await VOICE.runtime_status_async(probe_chatterbox=probe))
+
+
+@app.get("/api/agent/status")
+async def agent_status(probe: bool = False):
+    return JSONResponse(await _agent_status_packet(probe=probe))
+
+
+@app.get("/api/pet/status")
+async def pet_status(probe: bool = False):
+    return JSONResponse(await _agent_status_packet(probe=probe))
 
 
 @app.post("/api/voice/reload-chatterbox")

@@ -48,6 +48,105 @@ def test_voice_status_endpoint_reports_runtime_voice(monkeypatch):
     assert "ElevenLabs/11" in payload["fallback_warning"]
 
 
+def test_agent_status_endpoint_reports_local_operating_packet(monkeypatch):
+    probes = []
+
+    async def fake_status(probe_chatterbox=False):
+        probes.append(probe_chatterbox)
+        return {
+            "engine": "chatterbox",
+            "preferred_engine": "chatterbox",
+            "initialized": True,
+            "degraded": False,
+            "fallback_warning": "",
+        }
+
+    monkeypatch.setattr(server.VOICE, "runtime_status_async", fake_status)
+    monkeypatch.setattr(server.BRAIN, "model", "qwen-test")
+    monkeypatch.setattr(
+        server.BRAIN,
+        "active_endpoint",
+        {"name": "prometheus-lm-studio", "api_base": "http://127.0.0.1:1234/v1", "model": "qwen-test"},
+    )
+    monkeypatch.setattr(server.BRAIN, "last_endpoint_errors", [])
+    monkeypatch.setattr(
+        server.PLAYBOOKS.state,
+        "load",
+        lambda: {
+            "active": {
+                "id": "PB-1:hand-up",
+                "playbook_id": "PB-1",
+                "playbook_name": "Chair call",
+                "status": "waiting_for_chair",
+                "opener": "Dirty files need a decision.",
+                "created_at": "2026-07-08T19:00:00Z",
+            },
+            "queue": [{"id": "queued"}],
+            "drafts": [],
+            "events": [],
+            "paused": False,
+            "last_error": "",
+            "updated_at": "2026-07-08T19:01:00Z",
+        },
+    )
+
+    response = TestClient(app).get("/api/agent/status?probe=true")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["agent_id"] == "yennefer"
+    assert payload["kind"] == "local_operating_agent"
+    assert payload["status"] == "attention"
+    assert payload["version"] == server.__version__
+    assert payload["voice"]["engine"] == "chatterbox"
+    assert payload["model"]["active_endpoint"]["name"] == "prometheus-lm-studio"
+    assert "status" in payload["commands"]
+    assert payload["permissions"]["side_effect_tools_require_confirmation"] is True
+    assert payload["playbooks"]["active_hand_up"]["playbook_id"] == "PB-1"
+    assert payload["playbooks"]["queue_count"] == 1
+    assert "playbook_waiting_for_chair" in payload["needs_attention"]
+
+    alias = TestClient(app).get("/api/pet/status")
+    assert alias.status_code == 200
+    assert alias.json()["agent_id"] == "yennefer"
+    assert probes == [True, False]
+
+
+def test_agent_status_probe_timeout_returns_cached_voice(monkeypatch):
+    async def slow_status(probe_chatterbox=False):
+        assert probe_chatterbox is True
+        await asyncio.sleep(0.05)
+        return {"engine": "chatterbox"}
+
+    monkeypatch.setattr(server, "AGENT_VOICE_STATUS_TIMEOUT_SECONDS", 0.001)
+    monkeypatch.setattr(server.VOICE, "runtime_status_async", slow_status)
+    monkeypatch.setattr(
+        server.VOICE,
+        "runtime_status",
+        lambda: {
+            "engine": "chatterbox",
+            "preferred_engine": "chatterbox",
+            "initialized": True,
+            "degraded": False,
+            "fallback_warning": "",
+        },
+    )
+    monkeypatch.setattr(server.BRAIN, "last_endpoint_errors", [])
+    monkeypatch.setattr(
+        server.PLAYBOOKS.state,
+        "load",
+        lambda: {"active": None, "queue": [], "drafts": [], "events": [], "paused": False},
+    )
+
+    response = TestClient(app).get("/api/agent/status?probe=true")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["voice"]["probe_timed_out"] is True
+    assert "voice_probe_timeout" in payload["needs_attention"]
+    assert payload["status"] == "attention"
+
+
 def test_reload_chatterbox_endpoint_promotes_voice(monkeypatch):
     async def fake_promote(probe_audio=False):
         assert probe_audio is True
