@@ -176,6 +176,8 @@ def _agent_model_status() -> dict:
         "active_endpoint": _public_endpoint(endpoint),
         "configured_endpoint_count": len(getattr(BRAIN, "endpoints", []) or []),
         "last_errors": errors[:3],
+        "ready": not bool(errors),
+        "endpoint_name": endpoint.get("name") or "",
     }
 
 
@@ -258,6 +260,67 @@ def _agent_needs_attention(voice: dict, playbooks: dict, model: dict) -> list[st
     return needs
 
 
+def _speech_status() -> dict:
+    speaking = bool(SPEECH_WORKER and not SPEECH_WORKER.done())
+    return {
+        "speaking": speaking,
+        "queued": bool(SPEECH_NEXT),
+    }
+
+
+def _pet_compat_fields(
+    status: str,
+    voice: dict,
+    playbooks: dict,
+    model: dict,
+    needs_attention: list[str],
+    speech: dict,
+) -> dict:
+    endpoint = (model.get("active_endpoint") or {}).get("name") or "model"
+    voice_engine = voice.get("engine") or voice.get("preferred_engine") or "voice"
+
+    if status == "degraded":
+        mood = "degraded"
+        label = "Degraded"
+        detail = (
+            voice.get("fallback_warning")
+            or voice.get("degraded_reason")
+            or "; ".join(model.get("last_errors") or [])
+            or "Yennefer needs a runtime check"
+        )
+    elif speech.get("speaking"):
+        mood = "speaking"
+        label = "Speaking"
+        detail = f"{voice_engine} is answering"
+    elif playbooks.get("active"):
+        mood = "needs"
+        label = "Needs You"
+        active = playbooks.get("active_hand_up") or {}
+        detail = active.get("message") or "A playbook is waiting for approval"
+    elif needs_attention:
+        mood = "needs"
+        label = "Needs Attention"
+        if "playbook_last_error" in needs_attention:
+            detail = playbooks.get("last_error") or "Playbook needs attention"
+        elif "voice_probe_timeout" in needs_attention:
+            detail = "Deep voice probe timed out; cached voice state is available"
+        elif "voice_probe_error" in needs_attention:
+            detail = voice.get("probe_error") or "Voice probe failed"
+        else:
+            detail = ", ".join(needs_attention)
+    else:
+        mood = "idle"
+        label = "Ready"
+        detail = f"{voice_engine} ready on {endpoint}"
+
+    return {
+        "mood": mood,
+        "label": label,
+        "detail": detail[:180],
+        "speech": speech,
+    }
+
+
 async def _agent_voice_status(probe: bool = False) -> dict:
     try:
         return await asyncio.wait_for(
@@ -280,6 +343,7 @@ async def _agent_status_packet(probe: bool = False) -> dict:
     playbooks = _agent_playbook_status()
     resources = _agent_resource_status()
     permissions = _agent_permission_status()
+    speech = _speech_status()
     needs_attention = _agent_needs_attention(voice, playbooks, model)
     hard_needs = {"voice_uninitialized", "voice_degraded", "lmstudio_last_errors"}
     status = "ready"
@@ -301,9 +365,10 @@ async def _agent_status_packet(probe: bool = False) -> dict:
             "ui": f"{base_url}/",
             "agent_status": f"{base_url}/api/agent/status",
             "pet_status": f"{base_url}/api/pet/status",
-            "voice_status": f"{base_url}/api/voice/status",
-            "commands": f"{base_url}/api/commands",
-        },
+        "voice_status": f"{base_url}/api/voice/status",
+        "commands": f"{base_url}/api/commands",
+    },
+        **_pet_compat_fields(status, voice, playbooks, model, needs_attention, speech),
         "commands": [command["id"] for command in COMMANDS],
         "model": model,
         "voice": voice,

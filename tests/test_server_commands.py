@@ -98,8 +98,14 @@ def test_agent_status_endpoint_reports_local_operating_packet(monkeypatch):
     assert payload["kind"] == "local_operating_agent"
     assert payload["status"] == "attention"
     assert payload["version"] == server.__version__
+    assert payload["mood"] == "needs"
+    assert payload["label"] == "Needs You"
+    assert payload["detail"] == "Dirty files need a decision."
     assert payload["voice"]["engine"] == "chatterbox"
+    assert payload["model"]["ready"] is True
+    assert payload["model"]["endpoint_name"] == "prometheus-lm-studio"
     assert payload["model"]["active_endpoint"]["name"] == "prometheus-lm-studio"
+    assert payload["speech"] == {"speaking": False, "queued": False}
     assert "status" in payload["commands"]
     assert payload["permissions"]["side_effect_tools_require_confirmation"] is True
     assert payload["playbooks"]["active_hand_up"]["playbook_id"] == "PB-1"
@@ -108,7 +114,9 @@ def test_agent_status_endpoint_reports_local_operating_packet(monkeypatch):
 
     alias = TestClient(app).get("/api/pet/status")
     assert alias.status_code == 200
-    assert alias.json()["agent_id"] == "yennefer"
+    alias_payload = alias.json()
+    assert alias_payload["agent_id"] == "yennefer"
+    assert {"mood", "label", "detail", "speech"} <= set(alias_payload)
     assert probes == [True, False]
 
 
@@ -143,6 +151,9 @@ def test_agent_status_probe_timeout_returns_cached_voice(monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     assert payload["voice"]["probe_timed_out"] is True
+    assert payload["mood"] == "needs"
+    assert payload["label"] == "Needs Attention"
+    assert "Deep voice probe timed out" in payload["detail"]
     assert "voice_probe_timeout" in payload["needs_attention"]
     assert payload["status"] == "attention"
 
