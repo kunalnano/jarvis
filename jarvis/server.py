@@ -17,8 +17,8 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from . import __version__
@@ -941,6 +941,41 @@ async def _ask_for_shortcuts(question: str) -> str:
     return _text(await _complete(messages, with_tools=False)) or "I have nothing useful to say yet."
 
 
+async def _question_from_legacy_request(request: Request) -> str:
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        body = await request.json()
+        if isinstance(body, dict):
+            return str(
+                body.get("question")
+                or body.get("message")
+                or body.get("text")
+                or body.get("q")
+                or ""
+            ).strip()
+    return (await request.body()).decode("utf-8", "replace").strip()
+
+
+async def _legacy_query_reply(question: str, speak: bool = True) -> str:
+    question = " ".join((question or "").split())
+    if not question:
+        return "Jarvis is reachable. Pass a question, message, text, or q value."
+    command = _matched_command(question) or _intent_command(question)
+    if command and tools.is_safe(command["tool"]):
+        name = command["tool"]
+        args = command.get("args", {})
+        result = await tools.execute(name, args, CONFIG)
+        reply = _deterministic_tool_reply(name, args, result)
+    else:
+        try:
+            reply = await _ask_for_shortcuts(question)
+        except httpx.HTTPError as exc:
+            reply = _model_unavailable_reply(exc)
+    if speak:
+        _queue_speech(reply)
+    return reply
+
+
 async def _summarise_action(name, args, result, speak, user_message: str | None = None):
     if name == "web_search":
         instruction = (
@@ -1018,6 +1053,26 @@ async def reload_chatterbox_voice():
 @app.get("/api/commands")
 async def commands():
     return JSONResponse({"commands": COMMANDS})
+
+
+@app.get("/api/query", response_class=PlainTextResponse)
+@app.get("/query", response_class=PlainTextResponse)
+@app.get("/api/ask", response_class=PlainTextResponse)
+async def legacy_query_get(
+    q: str = "",
+    question: str = "",
+    message: str = "",
+    text: str = "",
+    speak: bool = True,
+):
+    return PlainTextResponse(await _legacy_query_reply(q or question or message or text, speak=speak))
+
+
+@app.post("/api/query", response_class=PlainTextResponse)
+@app.post("/query", response_class=PlainTextResponse)
+@app.post("/api/ask", response_class=PlainTextResponse)
+async def legacy_query_post(request: Request, speak: bool = True):
+    return PlainTextResponse(await _legacy_query_reply(await _question_from_legacy_request(request), speak=speak))
 
 
 @app.post("/api/capture")

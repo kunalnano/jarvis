@@ -219,6 +219,59 @@ def test_agent_status_includes_capture_summary(monkeypatch, tmp_path):
     assert capture["last_item"]["source"] == "siri-app-intent"
 
 
+def test_legacy_query_routes_return_plain_text_and_speak(monkeypatch):
+    calls = []
+    queued = []
+
+    async def fake_ask(question):
+        calls.append(question)
+        return f"Asked legacy: {question}"
+
+    monkeypatch.setattr(server, "_ask_for_shortcuts", fake_ask)
+    monkeypatch.setattr(server, "_queue_speech", queued.append)
+
+    response = TestClient(app).post("/api/query", json={"question": "Status?"})
+
+    assert response.status_code == 200
+    assert response.text == "Asked legacy: Status?"
+    assert response.headers["content-type"].startswith("text/plain")
+    assert calls == ["Status?"]
+    assert queued == ["Asked legacy: Status?"]
+
+
+def test_legacy_query_get_can_skip_speech(monkeypatch):
+    queued = []
+
+    async def fake_ask(question):
+        return f"Asked legacy: {question}"
+
+    monkeypatch.setattr(server, "_ask_for_shortcuts", fake_ask)
+    monkeypatch.setattr(server, "_queue_speech", queued.append)
+
+    response = TestClient(app).get("/api/ask?q=Ping&speak=false")
+
+    assert response.status_code == 200
+    assert response.text == "Asked legacy: Ping"
+    assert queued == []
+
+
+def test_legacy_query_uses_fast_command_router(monkeypatch):
+    async def fake_execute(name, args, cfg):
+        assert name == "capabilities"
+        return "Jarvis fast capabilities."
+
+    async def fail_ask(question):
+        raise AssertionError("legacy fast command should not call the model")
+
+    monkeypatch.setattr("jarvis.server.tools.execute", fake_execute)
+    monkeypatch.setattr(server, "_ask_for_shortcuts", fail_ask)
+
+    response = TestClient(app).get("/api/query?q=what%20can%20you%20do&speak=false")
+
+    assert response.status_code == 200
+    assert response.text == "Jarvis fast capabilities."
+
+
 def test_reload_chatterbox_endpoint_promotes_voice(monkeypatch):
     async def fake_promote(probe_audio=False):
         assert probe_audio is True
