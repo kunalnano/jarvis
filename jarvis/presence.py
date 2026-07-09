@@ -1,5 +1,5 @@
 """
-Presence - Yennefer's proactive / ambient layer.
+Presence - Jarvis's proactive / ambient layer.
 
 She speaks unprompted, the way a real presence would: spontaneous musings on a
 jittered timer, plus reactions to triggers (time-of-day, or a watched command's
@@ -16,7 +16,7 @@ from datetime import datetime
 import httpx
 from rich.console import Console
 
-from .brain import YENNEFER_SYSTEM_PROMPT, extract_speakable
+from .brain import JARVIS_SYSTEM_PROMPT, extract_speakable
 from .graph_memory import GraphMemory, build_situation, utc_ts
 
 console = Console()
@@ -69,7 +69,7 @@ class CommandTrigger:
 
 
 class Presence:
-    """Yennefer's ambient / proactive behaviour, run as background asyncio tasks."""
+    """Jarvis's ambient / proactive behaviour, run as background asyncio tasks."""
 
     def __init__(self, config: dict, brain, voice, speech_lock: asyncio.Lock):
         pc = (config or {}).get("presence", {}) or {}
@@ -114,9 +114,9 @@ class Presence:
         return (time.time() - self.last_spoke) >= self.min_gap
 
     async def _generate(self, situation: str) -> str:
-        """One-off, history-free line in Yennefer's voice (does not touch chat memory)."""
+        """One-off, history-free line in Jarvis's voice (does not touch chat memory)."""
         messages = [
-            {"role": "system", "content": YENNEFER_SYSTEM_PROMPT + PROACTIVE_STYLE},
+            {"role": "system", "content": JARVIS_SYSTEM_PROMPT + PROACTIVE_STYLE},
             {"role": "user", "content": situation},
         ]
         try:
@@ -154,7 +154,7 @@ class Presence:
         if self.lock.locked():
             return
         async with self.lock:
-            console.print("[magenta]Yennefer[/magenta] [dim](unprompted)[/dim]")
+            console.print("[magenta]Jarvis[/magenta] [dim](unprompted)[/dim]")
             await self.voice.speak(text)
         self.last_spoke = time.time()
 

@@ -70,7 +70,7 @@ COMMANDS = [
         "name": "Jarvis Doctor",
         "description": "Check and repair backend, overlay, voice, and LM Studio failover.",
         "trigger": "repair jarvis services",
-        "tool": "yennefer_doctor",
+        "tool": "jarvis_doctor",
         "args": {"repair": True},
     },
     {
@@ -109,17 +109,17 @@ COMMANDS = [
         "id": "git-jarvis",
         "name": "Jarvis Backend Git Status",
         "description": "Show git status for the Jarvis backend.",
-        "trigger": "show git status for /Users/alsharma/Projects/yennefer",
+        "trigger": "show git status for /Users/alsharma/Projects/jarvis",
         "tool": "git_status",
-        "args": {"path": "/Users/alsharma/Projects/yennefer"},
+        "args": {"path": "/Users/alsharma/Projects/jarvis"},
     },
     {
         "id": "git-jarvis-overlay",
         "name": "Jarvis Overlay Git Status",
         "description": "Show git status for the Jarvis overlay.",
-        "trigger": "show git status for /Users/alsharma/Projects/yennefer-overlay",
+        "trigger": "show git status for /Users/alsharma/Projects/jarvis-overlay",
         "tool": "git_status",
-        "args": {"path": "/Users/alsharma/Projects/yennefer-overlay"},
+        "args": {"path": "/Users/alsharma/Projects/jarvis-overlay"},
     },
 ]
 
@@ -249,7 +249,7 @@ def _agent_resource_status() -> dict:
 
 def _capture_dir() -> Path:
     capture = CONFIG.get("capture", {}) or {}
-    return Path(str(capture.get("inbox_dir") or "~/.yennefer/captures")).expanduser()
+    return Path(str(capture.get("inbox_dir") or "~/.jarvis/captures")).expanduser()
 
 
 def _capture_file(day: str | None = None) -> Path:
@@ -262,7 +262,7 @@ def _classify_capture(text: str) -> dict:
     if "?" in text or re.match(r"\s*(what|why|how|who|when|where|should|can|could|would)\b", lower):
         label = "question"
         reason = "looks like a question"
-    elif re.search(r"\b(agent|codex|jarvis|yennefer|siri|run|build|debug|fix|ship|ticket)\b", lower):
+    elif re.search(r"\b(agent|codex|jarvis|jarvis|siri|run|build|debug|fix|ship|ticket)\b", lower):
         label = "agent_request"
         reason = "mentions agent or execution language"
     elif re.search(r"\b(remind|todo|to-do|follow up|schedule|book|send|email|call|need to)\b", lower):
@@ -775,13 +775,13 @@ def _intent_command(text: str) -> dict | None:
             "tool": "capabilities",
             "args": {},
         }
-    if q in {"repair jarvis services", "repair yennefer services", "repair assistant services"}:
+    if q in {"repair jarvis services", "repair jarvis services", "repair assistant services"}:
         return {
             "id": "jarvis-doctor",
             "name": "Jarvis Doctor",
             "description": "Check and repair backend, overlay, voice, and LM Studio failover.",
             "trigger": text,
-            "tool": "yennefer_doctor",
+            "tool": "jarvis_doctor",
             "args": {"repair": True},
         }
     if url and any(word in q for word in ("read", "fetch", "summarize", "summarise", "look", "open", "page", "website", "url")):
@@ -848,7 +848,7 @@ def _intent_command(text: str) -> dict | None:
 
 
 def _deterministic_tool_reply(name: str, args: dict, result: str) -> str:
-    if name in {"capabilities", "weather", "web_search", "web_fetch", "observe_browser", "yennefer_doctor"}:
+    if name in {"capabilities", "weather", "web_search", "web_fetch", "observe_browser", "jarvis_doctor"}:
         return result
     return _fallback_vault_summary(args, result) or _fallback_action_summary(name, result)
 

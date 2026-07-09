@@ -1,4 +1,4 @@
-"""Yennefer playbook engine tests - no real Linear calls."""
+"""Jarvis playbook engine tests - no real Linear calls."""
 
 import asyncio
 import json
@@ -95,7 +95,7 @@ class FakeNotifier:
 
 def make_engine(tmp_path, fake, notifier=None):
     tmp_path.mkdir(parents=True, exist_ok=True)
-    vault_path = tmp_path / "Yennefer Playbooks.md"
+    vault_path = tmp_path / "Jarvis Playbooks.md"
     vault_path.write_text(PLAYBOOKS_MD, encoding="utf-8")
     state_path = tmp_path / "state.json"
     pause_path = tmp_path / "pause"
@@ -109,7 +109,7 @@ def make_engine(tmp_path, fake, notifier=None):
                 "interval_seconds": 900,
                 "jitter_seconds": 0,
                 "team": "Darkvectorcognition",
-                "project": "Yennefer",
+                "project": "Jarvis",
             }
         },
         client=fake,
@@ -255,7 +255,7 @@ def test_backlog_curator_dry_run_promotes_safe_backlog_without_linear_writes(tmp
                 state_type="backlog",
                 labels=("spec-driven", "council", "lift-M"),
                 priority=1,
-                project="Yennefer",
+                project="Jarvis",
             )
         ],
         queue_eligible=[],
@@ -288,7 +288,7 @@ def test_repeated_backlog_curator_dry_run_does_not_starve_pm_next(tmp_path):
         state_type="backlog",
         labels=("spec-driven", "council", "lift-M"),
         priority=1,
-        project="Yennefer",
+        project="Jarvis",
     )
     next_issue = LinearIssue(
         id="issue-42",
@@ -331,7 +331,7 @@ def test_backlog_curator_applies_promotions_and_preserves_labels(tmp_path):
                 state_type="backlog",
                 labels=("spec-driven", "council", "lift-M"),
                 priority=1,
-                project="Yennefer",
+                project="Jarvis",
             )
         ],
     )
@@ -362,7 +362,7 @@ def test_backlog_curator_preflights_target_state_before_commenting(tmp_path):
                 state_type="backlog",
                 labels=("spec-driven", "council", "lift-M"),
                 priority=1,
-                project="Yennefer",
+                project="Jarvis",
             )
         ],
     )
@@ -394,7 +394,7 @@ def test_backlog_curator_refuses_needs_spec_and_full_capacity_auto_start(tmp_pat
                 state="Backlog",
                 labels=("needs-spec", "council"),
                 priority=1,
-                project="Yennefer",
+                project="Jarvis",
             ),
             LinearIssue(
                 id="auto",
@@ -403,7 +403,7 @@ def test_backlog_curator_refuses_needs_spec_and_full_capacity_auto_start(tmp_pat
                 state="Backlog",
                 labels=("spec-driven", "council", "worker-ready"),
                 priority=1,
-                project="Yennefer",
+                project="Jarvis",
             ),
         ],
         active,
@@ -430,7 +430,7 @@ def test_backlog_curator_allows_only_one_auto_start(tmp_path):
                 state="Backlog",
                 labels=("spec-driven", "council", "worker-ready"),
                 priority=1,
-                project="Yennefer",
+                project="Jarvis",
             ),
             LinearIssue(
                 id="auto-2",
@@ -439,7 +439,7 @@ def test_backlog_curator_allows_only_one_auto_start(tmp_path):
                 state="Backlog",
                 labels=("spec-driven", "council", "worker-ready"),
                 priority=1,
-                project="Yennefer",
+                project="Jarvis",
             ),
         ],
         [],

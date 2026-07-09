@@ -1,5 +1,5 @@
 """
-Configuration loader for Yennefer.
+Configuration loader for Jarvis.
 Supports environment variable expansion in YAML config.
 """
 

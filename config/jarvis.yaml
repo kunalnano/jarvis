@@ -20,7 +20,7 @@ voice_output:
   speed: 0.96
   chatterbox:
     api_base: "http://127.0.0.1:8004"
-    voice: /Users/alsharma/Projects/yennefer/.local/voice-clones/her.wav
+    voice: /Users/alsharma/Projects/jarvis/.local/voice-clones/her.wav
     speed: 0.96
     startup_wait_seconds: 90
     retry_interval_seconds: 5
@@ -87,9 +87,9 @@ resources:
   enabled: true
   interval_seconds: 300
   registry_path: /Users/alsharma/Documents/ai/obsidian-vault/dvc/operating-model/DVC Machine & Agent Registry.md
-  state_path: ~/.yennefer/state.json
-  tally_dir: ~/.yennefer/resources
-  queue_dir: ~/.yennefer/resource-queue
+  state_path: ~/.jarvis/state.json
+  tally_dir: ~/.jarvis/resources
+  queue_dir: ~/.jarvis/resource-queue
   vault_rag_url: http://127.0.0.1:8742
   local_fallback: queued
   champion_model: qwen-agentworld-35b-a3b

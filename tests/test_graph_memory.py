@@ -21,7 +21,7 @@ CONTINUITY = {
     "prior_observations": [
         {"ts": "2026-06-09T10:00:00.000Z", "severity": "observation", "text": "Saw this yesterday."}
     ],
-    "open_gaps": [{"text": "Wire yennefer memory", "source_path": "specs/spec-x.md"}],
+    "open_gaps": [{"text": "Wire jarvis memory", "source_path": "specs/spec-x.md"}],
     "decisions": [{"text": "Observations go to live namespace", "source_path": "specs/spec-x.md"}],
 }
 
@@ -62,14 +62,14 @@ class TestRecordObservation:
         assert ok is True
         assert memory.available is True
         assert seen["url"] == "http://127.0.0.1:8742/api/graph/ingest/life-event"
-        assert seen["headers"]["Tailscale-User-Login"] == "yennefer@local"
+        assert seen["headers"]["Tailscale-User-Login"] == "jarvis@local"
         body = seen["body"]
         assert body["namespace"] == "live"
-        assert body["source_path"] == f"yennefer://observations/ci-build/{TS}"
+        assert body["source_path"] == f"jarvis://observations/ci-build/{TS}"
         assert body["trigger"] == "ci-build"
         assert body["severity"] == "observation"
         assert body["resource"] == "ci-build"
-        assert body["provenance"]["source_system"] == "yennefer-standalone"
+        assert body["provenance"]["source_system"] == "jarvis-standalone"
         assert body["provenance"]["emitter"] == "presence"
 
     def test_omits_resource_when_absent(self):
@@ -106,7 +106,7 @@ class TestFetchContinuity:
             return httpx.Response(
                 200,
                 json={
-                    "gaps": [{"text": "Wire yennefer memory", "source_path": "specs/spec-x.md"}],
+                    "gaps": [{"text": "Wire jarvis memory", "source_path": "specs/spec-x.md"}],
                     "decisions": [{"text": "Live namespace", "source_path": "specs/spec-x.md"}],
                 },
             )
@@ -116,7 +116,7 @@ class TestFetchContinuity:
 
         assert continuity is not None
         assert continuity["prior_observations"][0]["text"] == "Saw this yesterday."
-        assert continuity["open_gaps"][0]["text"] == "Wire yennefer memory"
+        assert continuity["open_gaps"][0]["text"] == "Wire jarvis memory"
         assert continuity["decisions"][0]["source_path"] == "specs/spec-x.md"
         assert any("trigger=ci-build" in url for url in calls)
         assert any("resource=ci-build" in url for url in calls)

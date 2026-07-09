@@ -13,8 +13,8 @@ from .presence import Presence
 console = Console()
 
 
-class YenneferOrchestrator:
-    """Main orchestrator for Yennefer AI Assistant."""
+class JarvisOrchestrator:
+    """Main orchestrator for Jarvis AI Assistant."""
     
     def __init__(self, config: dict):
         self.config = config
@@ -95,7 +95,7 @@ class YenneferOrchestrator:
             await self.shutdown()
     
     async def shutdown(self):
-        """Shutdown Yennefer."""
+        """Shutdown Jarvis."""
         self.is_running = False
         await self.presence.stop()
         await self.voice.speak("Until next time.")
@@ -104,4 +104,4 @@ class YenneferOrchestrator:
 
 
 # Backwards compatibility alias
-JarvisOrchestrator = YenneferOrchestrator
+JarvisOrchestrator = JarvisOrchestrator

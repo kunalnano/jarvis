@@ -18,13 +18,13 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .resource_conductor import ResourceConductor, merge_resources_line
 
-DEFAULT_BRIEFS_DIR = "~/Documents/ai/obsidian-vault/dvc/yennefer/briefs"
+DEFAULT_BRIEFS_DIR = "~/Documents/ai/obsidian-vault/dvc/jarvis/briefs"
 
 
 def install_shortcuts_routes(
     app: FastAPI,
     config: dict,
-    ask_yennefer: Callable[[str], Awaitable[str]],
+    ask_jarvis: Callable[[str], Awaitable[str]],
     playbooks,
 ) -> None:
     @app.post("/ask")
@@ -33,7 +33,7 @@ def install_shortcuts_routes(
         question = await _question_from_request(request)
         if not question:
             raise HTTPException(status_code=400, detail="question is required")
-        reply = limit_voice_reply(await ask_yennefer(question))
+        reply = limit_voice_reply(await ask_jarvis(question))
         return JSONResponse({"reply": reply})
 
     @app.get("/brief/today", response_class=PlainTextResponse)
@@ -69,7 +69,7 @@ def install_shortcuts_routes(
                 "active": _active_hand_up(playbooks),
             }
         if result is None:
-            result = {"status": "idle", "reply": "No active Yennefer hand-up."}
+            result = {"status": "idle", "reply": "No active Jarvis hand-up."}
         return JSONResponse(result)
 
 
@@ -116,7 +116,7 @@ def _require_bearer(request: Request, config: dict) -> None:
 def _token(config: dict) -> str:
     sc = (config or {}).get("shortcuts", {}) or {}
     return (
-        os.environ.get("YENNEFER_SHORTCUTS_TOKEN")
+        os.environ.get("JARVIS_SHORTCUTS_TOKEN")
         or str(sc.get("bearer_token") or "")
     ).strip()
 

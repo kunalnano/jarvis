@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Yennefer AI Assistant will be documented in this file.
+All notable changes to Jarvis AI Assistant will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -8,24 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.4] - 2026-07-08
 
 ### Added
-- Read-only `/api/agent/status` and `/api/pet/status` packets for HELM Gold, Stream Deck, and local monitors to inspect Yennefer's role, runtime health, model route, voice state, playbook attention, resources, permissions, and command IDs.
+- Read-only `/api/agent/status` and `/api/pet/status` packets for HELM Gold, Stream Deck, and local monitors to inspect Jarvis's role, runtime health, model route, voice state, playbook attention, resources, permissions, and command IDs.
 
 ## [0.3.3] - 2026-06-29
 
 ### Added
 - Explicit Chatterbox health state for the local Mac clone voice, including reference-audio checks, `/health` readiness, optional audio probe, and runtime status API.
-- Voice status and Chatterbox reload controls in the local Yennefer chat UI.
+- Voice status and Chatterbox reload controls in the local Jarvis chat UI.
 - Automatic promotion back to Chatterbox when the local clone voice recovers after a degraded fallback.
 
 ### Changed
 - Configured local Mac fallback order to prefer explicit ElevenLabs/11 fallback after Chatterbox, with visible warnings, before Kokoro or macOS fallback.
-- Yennefer now waits for Chatterbox during local startup using the configured warm-up window before declaring voice degradation.
+- Jarvis now waits for Chatterbox during local startup using the configured warm-up window before declaring voice degradation.
 
 ## [0.3.2] - 2026-01-03
 
 ### Added
-- **Terminal demo mockup** - SVG screenshot showing Yennefer in action with ASCII banner, startup, and sample conversation
-- **"Yennefer vs. The Cloud" comparison table** - Side-by-side vs ChatGPT, Claude API, Alexa/Siri
+- **Terminal demo mockup** - SVG screenshot showing Jarvis in action with ASCII banner, startup, and sample conversation
+- **"Jarvis vs. The Cloud" comparison table** - Side-by-side vs ChatGPT, Claude API, Alexa/Siri
 - **Dynamic GitHub badges** - Live last commit, stars, repo size, issues
 
 ### Changed
@@ -88,8 +88,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated default model to `eleven_turbo_v2_5`
 
 ### Changed
-- Renamed project from Jarvis to Yennefer
-- Updated launchers: `start_yennefer.bat`, `start_yennefer.sh`
+- Renamed project from Jarvis to Jarvis
+- Updated launchers: `start_jarvis.bat`, `start_jarvis.sh`
 
 ## [0.2.0] - 2025-12-31
 
@@ -101,7 +101,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conversation time remaining estimate
 
 ### Changed
-- Improved Yennefer personality prompt for voice-optimized responses
+- Improved Jarvis personality prompt for voice-optimized responses
 
 ## [0.1.0] - 2025-12-30
 
@@ -111,7 +111,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LM Studio backend integration (OpenAI-compatible API)
 - ElevenLabs TTS with custom voice support
 - macOS native TTS fallback
-- Yennefer personality based on The Witcher character
+- Jarvis personality based on The Witcher character
 - Basic conversation loop with text input
 - Windows voice typing support (Win+H)
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Yennefer - AI Assistant
+Jarvis - AI Assistant
 
 Usage:
     python -m jarvis.main
@@ -10,14 +10,14 @@ import asyncio
 from rich.console import Console
 from rich.panel import Panel
 
-from .orchestrator import YenneferOrchestrator
+from .orchestrator import JarvisOrchestrator
 from .config import load_config
 
 console = Console()
 
 
 def print_banner():
-    """Display Yennefer startup banner."""
+    """Display Jarvis startup banner."""
     banner = """
 ██╗   ██╗███████╗███╗   ██╗███╗   ██╗███████╗███████╗███████╗██████╗ 
 ╚██╗ ██╔╝██╔════╝████╗  ██║████╗  ██║██╔════╝██╔════╝██╔════╝██╔══██╗
@@ -26,7 +26,7 @@ def print_banner():
    ██║   ███████╗██║ ╚████║██║ ╚████║███████╗██║     ███████╗██║  ██║
    ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═╝  ╚═══╝╚══════╝╚═╝     ╚══════╝╚═╝  ╚═╝
     """
-    console.print(Panel(banner, title="[bold magenta]Yennefer AI[/bold magenta]",
+    console.print(Panel(banner, title="[bold magenta]Jarvis AI[/bold magenta]",
                         subtitle="v0.3.4", style="magenta"))
 
 
@@ -37,8 +37,8 @@ async def main():
     config = load_config()
     console.print("[green]✓[/green] Configuration loaded")
     
-    yennefer = YenneferOrchestrator(config)
-    await yennefer.run()
+    jarvis = JarvisOrchestrator(config)
+    await jarvis.run()
 
 
 def cli():

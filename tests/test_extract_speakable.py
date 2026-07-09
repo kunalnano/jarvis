@@ -2,10 +2,10 @@
 
 from jarvis.brain import extract_speakable
 
-# The exact failure mode from yennefer-daemon.log on 2026-06-10: content empty,
+# The exact failure mode from jarvis-daemon.log on 2026-06-10: content empty,
 # the whole token budget burned inside reasoning_content, no closing tag.
 LEAKED_REASONING = (
-    "Thinking Process: 1. **Analyze the Request:** * **Persona:** Yennefer of "
+    "Thinking Process: 1. **Analyze the Request:** * **Persona:** Jarvis of "
     "Vengerberg (from The Witcher). * **Traits:** Confident, sharp, intelligent..."
 )
 

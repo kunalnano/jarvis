@@ -1,7 +1,7 @@
 #!/bin/bash
-# Yennefer Setup - Mac
+# Jarvis Setup - Mac
 
-echo "Setting up Yennefer AI Assistant..."
+echo "Setting up Jarvis AI Assistant..."
 
 # Create virtual environment
 python3 -m venv .venv
@@ -25,4 +25,4 @@ echo ""
 echo "Next steps:"
 echo "1. Edit config/jarvis.yaml with your settings"
 echo "2. Make sure LM Studio is running on Windows with 'Serve on Local Network' enabled"
-echo "3. Run: ./start_yennefer.sh"
+echo "3. Run: ./start_jarvis.sh"
