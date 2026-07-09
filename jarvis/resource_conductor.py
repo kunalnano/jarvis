@@ -1,5 +1,5 @@
 """
-Resource conductor for Yennefer.
+Resource conductor for Jarvis.
 
 Reads the DVC Machine & Agent Registry on each decision, routes local-tolerant
 work to LM Studio when healthy, and leaves an auditable tally for the daily
@@ -26,8 +26,8 @@ DEFAULT_REGISTRY_PATH = (
     "~/Documents/ai/obsidian-vault/dvc/operating-model/"
     "DVC Machine & Agent Registry.md"
 )
-DEFAULT_STATE_PATH = "~/.yennefer/state.json"
-DEFAULT_TALLY_DIR = "~/.yennefer/resources"
+DEFAULT_STATE_PATH = "~/.jarvis/state.json"
+DEFAULT_TALLY_DIR = "~/.jarvis/resources"
 DEFAULT_VAULT_RAG_URL = "http://127.0.0.1:8742"
 
 LOCAL_HINTS = {
@@ -91,7 +91,7 @@ class RouteDecision:
 
 
 class ResourceConductor:
-    """Local-first routing and tally layer for Yennefer."""
+    """Local-first routing and tally layer for Jarvis."""
 
     def __init__(
         self,
@@ -117,7 +117,7 @@ class ResourceConductor:
             str(rc.get("state_path") or playbooks.get("state_path") or DEFAULT_STATE_PATH)
         )
         self.tally_dir = _expand_path(str(rc.get("tally_dir") or DEFAULT_TALLY_DIR))
-        self.queue_dir = _expand_path(str(rc.get("queue_dir") or "~/.yennefer/resource-queue"))
+        self.queue_dir = _expand_path(str(rc.get("queue_dir") or "~/.jarvis/resource-queue"))
         self.vault_rag_url = _clean_value(rc.get("vault_rag_url")) or DEFAULT_VAULT_RAG_URL
         self.local_fallback = (
             _clean_value(rc.get("local_fallback"))

@@ -1,5 +1,5 @@
 @echo off
-echo Setting up Yennefer AI Assistant...
+echo Setting up Jarvis AI Assistant...
 
 cd /d "%~dp0"
 

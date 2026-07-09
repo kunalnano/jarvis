@@ -224,9 +224,9 @@ async def capabilities(_args, _cfg):
     )
 
 
-async def yennefer_doctor(args, _cfg):
+async def jarvis_doctor(args, _cfg):
     repair = bool(args.get("repair", True))
-    script = Path(__file__).parent.parent / "scripts" / "yennefer-doctor.zsh"
+    script = Path(__file__).parent.parent / "scripts" / "jarvis-doctor.zsh"
     if not script.exists():
         return f"Jarvis doctor script is missing: {script}"
     mode = "--repair" if repair else "--check"
@@ -772,7 +772,7 @@ REGISTRY = {
     "capabilities": {"handler": capabilities, "safe": True,
         "description": "Explain what Jarvis can do right now from the actual local tool registry.",
         "parameters": {"type": "object", "properties": {}}},
-    "yennefer_doctor": {"handler": yennefer_doctor, "safe": True,
+    "jarvis_doctor": {"handler": jarvis_doctor, "safe": True,
         "description": "Check and repair Jarvis services: backend, overlay, Chatterbox voice, local Prometheus LM Studio, and Stormbreaker/Windows LM Studio fallback. Does not print secrets.",
         "parameters": {"type": "object", "properties": {"repair": {"type": "boolean", "description": "true to kickstart/open missing services; false to only check status"}}}},
     "web_search": {"handler": web_search, "safe": True,

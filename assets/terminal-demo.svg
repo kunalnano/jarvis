@@ -19,7 +19,7 @@
   <circle cx="60" cy="18" r="6" fill="#27ca40"/>
   
   <!-- Title -->
-  <text x="400" y="23" font-family="SF Mono, Consolas, monospace" font-size="13" fill="#888" text-anchor="middle">yennefer — python -m jarvis.main</text>
+  <text x="400" y="23" font-family="SF Mono, Consolas, monospace" font-size="13" fill="#888" text-anchor="middle">jarvis — python -m jarvis.main</text>
   
   <!-- Terminal Content -->
   <text font-family="SF Mono, Consolas, monospace" font-size="12" fill="#cdd6f4">
@@ -38,8 +38,8 @@
     <tspan x="20" y="249" fill="#27ca40">✓</tspan><tspan x="35" y="249" fill="#888"> ElevenLabs ready (voice: jEqL7VrZ..., speed: 1.15x)</tspan>
     <tspan x="20" y="267" fill="#888">  ElevenLabs: ████████░░░░░░░░░░░░░ 3,847/10,000 chars (38.5%)</tspan>
     
-    <!-- Yennefer speaks -->
-    <tspan x="20" y="302" fill="#a855f7">Yennefer:</tspan><tspan fill="#cdd6f4"> I'm here. What do you need?</tspan>
+    <!-- Jarvis speaks -->
+    <tspan x="20" y="302" fill="#a855f7">Jarvis:</tspan><tspan fill="#cdd6f4"> I'm here. What do you need?</tspan>
     
     <!-- Commands hint -->
     <tspan x="20" y="337" fill="#555">Commands:</tspan>
@@ -54,8 +54,8 @@
     <!-- Token bar -->
     <tspan x="20" y="479" fill="#555">Tokens: </tspan><tspan fill="#27ca40">██</tspan><tspan fill="#3a3a4a">░░░░░░░░░░░░░░░░░░░░░░░░░░░░</tspan><tspan fill="#555"> 847/32,000 (2.6%) • ~158 min remaining</tspan>
     
-    <!-- Yennefer Response -->
-    <tspan x="20" y="514" fill="#a855f7">Yennefer:</tspan><tspan fill="#cdd6f4"> How ambitious. Let me guess—you've written about</tspan>
+    <!-- Jarvis Response -->
+    <tspan x="20" y="514" fill="#a855f7">Jarvis:</tspan><tspan fill="#cdd6f4"> How ambitious. Let me guess—you've written about</tspan>
     <tspan x="20" y="532" fill="#cdd6f4">two hundred lines of Rust and now you're convinced it's the answer</tspan>
     <tspan x="20" y="550" fill="#cdd6f4">to everything? Rewriting a working application is rarely the</tspan>
     <tspan x="20" y="568" fill="#cdd6f4">solution. What's actually wrong with your current implementation?</tspan>

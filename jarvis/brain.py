@@ -49,7 +49,7 @@ Respond as if speaking aloud. No formatting.
 
 /no_think"""
 
-YENNEFER_SYSTEM_PROMPT = JARVIS_SYSTEM_PROMPT
+JARVIS_SYSTEM_PROMPT = JARVIS_SYSTEM_PROMPT
 
 
 def estimate_tokens(text: str) -> int:

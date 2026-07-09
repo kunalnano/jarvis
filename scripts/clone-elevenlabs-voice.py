@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Clone or duplicate Yennefer's ElevenLabs voice when the account tier allows it."""
+"""Clone or duplicate Jarvis's ElevenLabs voice when the account tier allows it."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from elevenlabs.core.api_error import ApiError
 from jarvis.config import load_config
 
 
-OUT_DIR = Path("/Users/alsharma/Projects/yennefer/.local/voice-clones")
+OUT_DIR = Path("/Users/alsharma/Projects/jarvis/.local/voice-clones")
 
 
 def stamp() -> str:
@@ -84,7 +84,7 @@ def try_ivc(client: ElevenLabs, source, source_voice_id: str, sample_path: Path,
 
 def try_remix(client: ElevenLabs, source, source_voice_id: str, out_dir: Path, clone_name: str):
     preview_text = (
-        "Prometheus is online, and Yennefer is speaking with the same composed, precise, lower register voice. "
+        "Prometheus is online, and Jarvis is speaking with the same composed, precise, lower register voice. "
         "This is a short verification sample for the duplicated ElevenLabs voice."
     )
     response = client.text_to_voice.remix(
@@ -105,7 +105,7 @@ def try_remix(client: ElevenLabs, source, source_voice_id: str, out_dir: Path, c
 
     created = client.text_to_voice.create(
         voice_name=clone_name,
-        voice_description=source.description or "Generated Yennefer voice clone.",
+        voice_description=source.description or "Generated Jarvis voice clone.",
         generated_voice_id=preview.generated_voice_id,
         labels={
             **{str(k): str(v) for k, v in (source.labels or {}).items() if v is not None},

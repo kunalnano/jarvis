@@ -4,10 +4,10 @@ set -euo pipefail
 repo_dir="$(cd -- "$(dirname -- "$0")/.." && pwd)"
 env_file="$repo_dir/.env"
 voice_id_default="QPYZDsvgGiT4CMQghb53"
-label="ai.darkvector.yennefer-server"
+label="ai.darkvector.jarvis-server"
 
 if [[ ! -d "$repo_dir/jarvis" ]]; then
-  print -u2 "Could not find Yennefer repo root from $0"
+  print -u2 "Could not find Jarvis repo root from $0"
   exit 1
 fi
 

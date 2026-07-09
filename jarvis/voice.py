@@ -156,7 +156,7 @@ class Voice:
         self.chatterbox_probe_on_start = bool(chatterbox.get('probe_on_start', False))
         self.chatterbox_probe_text = chatterbox.get(
             'probe_text',
-            'Yennefer local voice health check.',
+            'Jarvis local voice health check.',
         )
         # Extra fields merged into the request body (e.g. exaggeration) so the
         # server's dials are tunable from config without code changes.
@@ -449,12 +449,12 @@ class Voice:
             )
         elif engine == 'kokoro':
             self.fallback_warning = (
-                "VOICE WARNING: using Kokoro fallback, not the Yennefer clone voice, "
+                "VOICE WARNING: using Kokoro fallback, not the Jarvis clone voice, "
                 f"because Chatterbox is degraded ({reason})."
             )
         elif engine == 'macos':
             self.fallback_warning = (
-                "VOICE WARNING: using macOS fallback voice, not the Yennefer clone voice, "
+                "VOICE WARNING: using macOS fallback voice, not the Jarvis clone voice, "
                 f"because Chatterbox is degraded ({reason})."
             )
         else:
@@ -604,7 +604,7 @@ class Voice:
         This sits at the single speech chokepoint, so all engines
         (elevenlabs/chatterbox/kokoro/macos) are covered. Fail-soft and
         non-blocking: a cue failure must never delay or break speech. Touches
-        no governor state in ~/.yennefer/state.json.
+        no governor state in ~/.jarvis/state.json.
         """
         try:
             import time
@@ -625,7 +625,7 @@ class Voice:
                     subprocess.run(
                         ["osascript", "-e",
                          f'display notification {_applescript_string(banner)} '
-                         f'with title "Yennefer"'],
+                         f'with title "Jarvis"'],
                         check=False, capture_output=True, timeout=5,
                     )
                 except Exception:
@@ -644,7 +644,7 @@ class Voice:
         # DAR-130: every utterance emits a desktop notification cue (all engines).
         await self._emit_speech_cue(text)
 
-        console.print(f"[magenta]Yennefer:[/magenta] {text}")
+        console.print(f"[magenta]Jarvis:[/magenta] {text}")
 
         if self.preferred_engine == 'chatterbox' and (self.engine != 'chatterbox' or not self.initialized):
             await self.try_promote_chatterbox(probe_audio=False)

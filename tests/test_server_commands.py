@@ -305,7 +305,7 @@ def test_jarvis_doctor_command_invokes_repair_script(monkeypatch):
     assert calls[0][0][-1] == "--repair"
 
 
-def test_legacy_yennefer_doctor_phrase_still_routes(monkeypatch):
+def test_legacy_jarvis_doctor_phrase_still_routes(monkeypatch):
     calls = []
 
     async def fake_run(cmd, timeout=60.0, cwd=None):
@@ -316,7 +316,7 @@ def test_legacy_yennefer_doctor_phrase_still_routes(monkeypatch):
 
     response = TestClient(app).post(
         "/api/chat",
-        json={"message": "repair yennefer services", "speak": False},
+        json={"message": "repair jarvis services", "speak": False},
     )
 
     assert response.status_code == 200

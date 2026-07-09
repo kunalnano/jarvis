@@ -1,9 +1,9 @@
 """
-Playbook engine - Yennefer's approval-gated operating layer.
+Playbook engine - Jarvis's approval-gated operating layer.
 
 The engine reads playbooks from the vault, watches Linear through a
 chair-provisioned LINEAR_API_KEY, raises one hand-up at a time in
-~/.yennefer/state.json, and only executes ON-GO-AHEAD steps after a matching
+~/.jarvis/state.json, and only executes ON-GO-AHEAD steps after a matching
 chat approval.
 """
 
@@ -27,11 +27,11 @@ from rich.console import Console
 console = Console()
 
 DEFAULT_VAULT_PLAYBOOKS = (
-    "~/Documents/ai/obsidian-vault/dvc/yennefer/Yennefer Playbooks.md"
+    "~/Documents/ai/obsidian-vault/dvc/jarvis/Jarvis Playbooks.md"
 )
-DEFAULT_STATE_PATH = "~/.yennefer/state.json"
-DEFAULT_PAUSE_PATH = "~/.yennefer/pause"
-DEFAULT_HANDOFF_DIR = "~/.yennefer/handoffs"
+DEFAULT_STATE_PATH = "~/.jarvis/state.json"
+DEFAULT_PAUSE_PATH = "~/.jarvis/pause"
+DEFAULT_HANDOFF_DIR = "~/.jarvis/handoffs"
 DEFAULT_INTERVAL_SECONDS = 15 * 60
 DEFAULT_JITTER_SECONDS = 90
 DEFAULT_PM_TIMEZONE = "America/Chicago"
@@ -137,7 +137,7 @@ class LinearBoardClient:
     async def list_chair_call_issues(self, older_than: datetime) -> list[LinearIssue]:
         team_id = await self._team_id()
         query = """
-        query YenneferChairCalls($first: Int!, $teamId: String!) {
+        query JarvisChairCalls($first: Int!, $teamId: String!) {
           issues(first: $first, filter: {
             team: { id: { eq: $teamId } }
             labels: { name: { eq: "chair-call" } }
@@ -160,7 +160,7 @@ class LinearBoardClient:
     async def list_queue_eligible_issues(self) -> list[LinearIssue]:
         team_id = await self._team_id()
         query = """
-        query YenneferQueueCandidates($first: Int!, $teamId: String!) {
+        query JarvisQueueCandidates($first: Int!, $teamId: String!) {
           issues(first: $first, filter: {
             team: { id: { eq: $teamId } }
             state: { type: { nin: ["completed", "canceled"] } }
@@ -182,7 +182,7 @@ class LinearBoardClient:
     async def list_backlog_issues(self, limit: int = 50) -> list[LinearIssue]:
         team_id = await self._team_id()
         query = """
-        query YenneferBacklogIssues($first: Int!, $teamId: String!) {
+        query JarvisBacklogIssues($first: Int!, $teamId: String!) {
           issues(first: $first, filter: {
             team: { id: { eq: $teamId } }
             state: { type: { eq: "backlog" } }
@@ -203,7 +203,7 @@ class LinearBoardClient:
     async def list_in_progress_issues(self, limit: int = 50) -> list[LinearIssue]:
         team_id = await self._team_id()
         query = """
-        query YenneferInProgressIssues($first: Int!, $teamId: String!) {
+        query JarvisInProgressIssues($first: Int!, $teamId: String!) {
           issues(first: $first, filter: {
             team: { id: { eq: $teamId } }
             state: { type: { eq: "started" } }
@@ -230,7 +230,7 @@ class LinearBoardClient:
     ) -> LinearIssue | None:
         project_clause = "projectName: $project," if project else ""
         query = f"""
-        mutation YenneferCreateNeedsSpec(
+        mutation JarvisCreateNeedsSpec(
           $team: String!
           $project: String
           $title: String!
@@ -267,7 +267,7 @@ class LinearBoardClient:
 
     async def comment_on_issue(self, issue_id: str, body: str) -> None:
         query = """
-        mutation YenneferComment($issueId: String!, $body: String!) {
+        mutation JarvisComment($issueId: String!, $body: String!) {
           commentCreate(input: { issueId: $issueId, body: $body }) { success }
         }
         """
@@ -289,7 +289,7 @@ class LinearBoardClient:
             final = (set(current) | set(add_ids.values())) - set(remove_ids.values())
             issue_input["labelIds"] = sorted(final)
         query = """
-        mutation YenneferUpdateIssue($issueId: String!, $input: IssueUpdateInput!) {
+        mutation JarvisUpdateIssue($issueId: String!, $input: IssueUpdateInput!) {
           issueUpdate(id: $issueId, input: $input) { success }
         }
         """
@@ -305,7 +305,7 @@ class LinearBoardClient:
             return self._state_id_cache[cache_key]
         team_id = await self._team_id()
         query = """
-        query YenneferWorkflowState($name: String!, $teamId: String!) {
+        query JarvisWorkflowState($name: String!, $teamId: String!) {
           workflowStates(first: 100, filter: {
             team: { id: { eq: $teamId } }
             name: { eq: $name }
@@ -327,7 +327,7 @@ class LinearBoardClient:
         if not self.team:
             raise LinearUnavailable("Linear team is not configured")
         query = """
-        query YenneferTeams($first: Int!) {
+        query JarvisTeams($first: Int!) {
           teams(first: $first) {
             nodes { id name key }
           }
@@ -346,7 +346,7 @@ class LinearBoardClient:
 
     async def _issue_label_ids(self, issue_id: str) -> tuple[str, ...]:
         query = """
-        query YenneferIssueLabels($issueId: String!) {
+        query JarvisIssueLabels($issueId: String!) {
           issue(id: $issueId) {
             labels { nodes { id name } }
           }
@@ -361,7 +361,7 @@ class LinearBoardClient:
         if not clean:
             return {}
         query = """
-        query YenneferLabelIds($first: Int!) {
+        query JarvisLabelIds($first: Int!) {
           issueLabels(first: $first) {
             nodes { id name }
           }
@@ -386,7 +386,7 @@ class ShortcutNotifier:
     def __init__(self, config: dict | None = None):
         sc = (config or {}).get("shortcuts", {}) or {}
         self.enabled = bool(sc.get("notify_enabled", False))
-        self.shortcut_name = str(sc.get("notify_shortcut") or "Yennefer Says")
+        self.shortcut_name = str(sc.get("notify_shortcut") or "Jarvis Says")
         self.timeout_seconds = float(sc.get("notify_timeout_seconds", 10))
 
     async def notify(self, text: str) -> dict:
@@ -486,7 +486,7 @@ class PlaybookEngine:
         self.interval_seconds = float(pc.get("interval_seconds", DEFAULT_INTERVAL_SECONDS))
         self.jitter_seconds = float(pc.get("jitter_seconds", DEFAULT_JITTER_SECONDS))
         self.team = str(pc.get("team") or "Darkvectorcognition")
-        self.project = pc.get("project") or "Yennefer"
+        self.project = pc.get("project") or "Jarvis"
         self.vault_path = _expand_path(str(pc.get("vault_path") or DEFAULT_VAULT_PLAYBOOKS))
         self.pause_path = _expand_path(str(pc.get("pause_path") or DEFAULT_PAUSE_PATH))
         self.handoff_dir = _expand_path(str(pc.get("handoff_dir") or DEFAULT_HANDOFF_DIR))
@@ -499,7 +499,7 @@ class PlaybookEngine:
         self.weekend_mode = str(pm.get("weekend_mode") or "auto").lower()
         self.weekend_personal_projects = tuple(
             str(name).strip()
-            for name in pm.get("weekend_personal_projects", ("Yennefer", "HELM"))
+            for name in pm.get("weekend_personal_projects", ("Jarvis", "HELM"))
             if str(name).strip()
         )
         self.weekend_personal_keywords = tuple(
@@ -510,7 +510,7 @@ class PlaybookEngine:
                     "personal",
                     "assistant",
                     "presence",
-                    "yennefer",
+                    "jarvis",
                     "helm native",
                     "swift native",
                     "weekend",
@@ -543,7 +543,7 @@ class PlaybookEngine:
             try:
                 await self.evaluate_once()
             except Exception as exc:
-                console.print(f"[dim]Yennefer playbook evaluation failed: {exc}[/dim]")
+                console.print(f"[dim]Jarvis playbook evaluation failed: {exc}[/dim]")
             delay = self.interval_seconds + random.uniform(0, self.jitter_seconds)
             await asyncio.sleep(delay)
 
@@ -701,7 +701,7 @@ class PlaybookEngine:
                     {
                         "identifier": issue["identifier"],
                         "question": f"What verdict should I record for {issue['identifier']}?",
-                        "recommendation": "Handle the oldest chair-call first; no merge is performed by Yennefer.",
+                        "recommendation": "Handle the oldest chair-call first; no merge is performed by Jarvis.",
                     }
                     for issue in packet
                 ],
@@ -1074,7 +1074,7 @@ class PlaybookEngine:
         safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", selected.identifier or "issue")
         path = self.handoff_dir / f"{isoformat(now).replace(':', '').replace('Z', '')}-{safe_id}.md"
         lines = [
-            f"# Yennefer Worker Handoff - {selected.identifier}",
+            f"# Jarvis Worker Handoff - {selected.identifier}",
             "",
             f"Created: {isoformat(now)}",
             f"Weekend personal pass: {str(weekend).lower()}",
@@ -1132,7 +1132,7 @@ class PlaybookEngine:
         if not sources:
             sources = [
                 "Clarify next weekend personal-infrastructure slice for TAS.",
-                "Backfill Yennefer runbook evidence expectations.",
+                "Backfill Jarvis runbook evidence expectations.",
                 "Define next small HELM native shell acceptance pass.",
             ]
         candidates = []
@@ -1142,7 +1142,7 @@ class PlaybookEngine:
                 "title": title,
                 "description": (
                     f"AUTHORED: {stamp}\n"
-                    "SOURCE: Yennefer PB-2 Queue Starvation\n\n"
+                    "SOURCE: Jarvis PB-2 Queue Starvation\n\n"
                     "PB-2 detected zero queue-eligible tickets while worker capacity existed. "
                     "This is a needs-spec candidate only; it is deliberately unranked and must "
                     "be chair-ranked before work begins.\n\n"
@@ -1372,7 +1372,7 @@ def _curator_comment(action: CuratorAction, now: datetime, dry_run: bool) -> str
         f"Proposed move: `{target}`\n"
         f"Reason: {action.reason}\n"
         f"Labels preserved: {labels}\n\n"
-        "Safety: Yennefer never marks Done, never merges, and never strips protected labels during this pass."
+        "Safety: Jarvis never marks Done, never merges, and never strips protected labels during this pass."
     )
 
 
@@ -1430,7 +1430,7 @@ def _candidate_title(source: str, index: int) -> str:
 
 
 def _recent_proposed_tickets() -> list[str]:
-    briefs = _expand_path("~/Documents/ai/obsidian-vault/dvc/yennefer/briefs")
+    briefs = _expand_path("~/Documents/ai/obsidian-vault/dvc/jarvis/briefs")
     if not briefs.exists():
         return []
     try:
