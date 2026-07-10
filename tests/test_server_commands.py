@@ -1,5 +1,6 @@
 import asyncio
 import json
+import stat
 
 import httpx
 from fastapi.testclient import TestClient
@@ -183,6 +184,8 @@ def test_capture_endpoint_persists_local_inbox(monkeypatch, tmp_path):
     assert len(files) == 1
     saved = json.loads(files[0].read_text(encoding="utf-8").strip())
     assert saved["text"] == "Remind me to review LOCAL-156 with Siri"
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
+    assert stat.S_IMODE(files[0].stat().st_mode) == 0o600
 
     inbox = TestClient(app).get("/api/capture/inbox?limit=5")
     assert inbox.status_code == 200
@@ -217,6 +220,8 @@ def test_agent_status_includes_capture_summary(monkeypatch, tmp_path):
     assert capture["inbox_dir"] == str(tmp_path)
     assert capture["today_count"] == 1
     assert capture["last_item"]["source"] == "siri-app-intent"
+    assert "text" not in capture["last_item"]
+    assert "context" not in capture["last_item"]
 
 
 def test_legacy_query_routes_return_plain_text_and_speak(monkeypatch):
@@ -305,7 +310,7 @@ def test_jarvis_doctor_command_invokes_repair_script(monkeypatch):
     assert calls[0][0][-1] == "--repair"
 
 
-def test_legacy_jarvis_doctor_phrase_still_routes(monkeypatch):
+def test_legacy_yennefer_doctor_phrase_still_routes(monkeypatch):
     calls = []
 
     async def fake_run(cmd, timeout=60.0, cwd=None):
@@ -316,7 +321,7 @@ def test_legacy_jarvis_doctor_phrase_still_routes(monkeypatch):
 
     response = TestClient(app).post(
         "/api/chat",
-        json={"message": "repair jarvis services", "speak": False},
+        json={"message": "repair yennefer services", "speak": False},
     )
 
     assert response.status_code == 200

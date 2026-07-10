@@ -11,6 +11,7 @@ Run:  python -m jarvis.server     (then open the printed URL)
 
 import json
 import asyncio
+import os
 import re
 import uuid
 from datetime import date, datetime, timezone
@@ -19,7 +20,7 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import __version__
 from .brain import Brain, extract_speakable
@@ -145,8 +146,8 @@ class ChatIn(BaseModel):
 
 
 class CaptureIn(BaseModel):
-    text: str
-    source: str = "siri"
+    text: str = Field(min_length=1, max_length=20_000)
+    source: str = Field(default="siri", max_length=100)
     speak: bool = False
     context: dict | None = None
 
@@ -249,7 +250,13 @@ def _agent_resource_status() -> dict:
 
 def _capture_dir() -> Path:
     capture = CONFIG.get("capture", {}) or {}
-    return Path(str(capture.get("inbox_dir") or "~/.jarvis/captures")).expanduser()
+    inbox = Path(str(capture.get("inbox_dir") or "~/.jarvis/captures")).expanduser()
+    inbox.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        inbox.chmod(0o700)
+    except OSError:
+        pass
+    return inbox
 
 
 def _capture_file(day: str | None = None) -> Path:
@@ -262,7 +269,7 @@ def _classify_capture(text: str) -> dict:
     if "?" in text or re.match(r"\s*(what|why|how|who|when|where|should|can|could|would)\b", lower):
         label = "question"
         reason = "looks like a question"
-    elif re.search(r"\b(agent|codex|jarvis|jarvis|siri|run|build|debug|fix|ship|ticket)\b", lower):
+    elif re.search(r"\b(agent|codex|jarvis|yennefer|siri|run|build|debug|fix|ship|ticket)\b", lower):
         label = "agent_request"
         reason = "mentions agent or execution language"
     elif re.search(r"\b(remind|todo|to-do|follow up|schedule|book|send|email|call|need to)\b", lower):
@@ -308,8 +315,13 @@ def _store_capture(text: str, source: str = "siri", context: dict | None = None)
         "next_action": "review_in_jarvis_inbox",
     }
     path = _capture_file(now[:10])
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as fh:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    if hasattr(os, "fchmod"):
+        try:
+            os.fchmod(descriptor, 0o600)
+        except OSError:
+            pass
+    with os.fdopen(descriptor, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(item, sort_keys=True) + "\n")
     item["inbox_path"] = str(path)
     return item
@@ -349,11 +361,18 @@ def _capture_status() -> dict:
         except OSError:
             today_count = 0
     recent = _load_captures(limit=1)
+    last_item = None
+    if recent:
+        item = recent[0]
+        last_item = {
+            key: item.get(key)
+            for key in ("id", "captured_at", "source", "classification", "next_action")
+        }
     return {
         "enabled": True,
         "inbox_dir": str(_capture_dir()),
         "today_count": today_count,
-        "last_item": recent[0] if recent else None,
+        "last_item": last_item,
     }
 
 
@@ -775,7 +794,7 @@ def _intent_command(text: str) -> dict | None:
             "tool": "capabilities",
             "args": {},
         }
-    if q in {"repair jarvis services", "repair jarvis services", "repair assistant services"}:
+    if q in {"repair jarvis services", "repair yennefer services", "repair assistant services"}:
         return {
             "id": "jarvis-doctor",
             "name": "Jarvis Doctor",
