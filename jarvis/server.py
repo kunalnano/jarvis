@@ -269,7 +269,7 @@ def _classify_capture(text: str) -> dict:
     if "?" in text or re.match(r"\s*(what|why|how|who|when|where|should|can|could|would)\b", lower):
         label = "question"
         reason = "looks like a question"
-    elif re.search(r"\b(agent|codex|jarvis|yennefer|siri|run|build|debug|fix|ship|ticket)\b", lower):
+    elif re.search(r"\b(agent|codex|jarvis|jarvis|siri|run|build|debug|fix|ship|ticket)\b", lower):
         label = "agent_request"
         reason = "mentions agent or execution language"
     elif re.search(r"\b(remind|todo|to-do|follow up|schedule|book|send|email|call|need to)\b", lower):
@@ -794,7 +794,7 @@ def _intent_command(text: str) -> dict | None:
             "tool": "capabilities",
             "args": {},
         }
-    if q in {"repair jarvis services", "repair yennefer services", "repair assistant services"}:
+    if q in {"repair jarvis services", "repair jarvis services", "repair assistant services"}:
         return {
             "id": "jarvis-doctor",
             "name": "Jarvis Doctor",
