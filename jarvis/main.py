@@ -27,7 +27,7 @@ def print_banner():
    ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═╝  ╚═══╝╚══════╝╚═╝     ╚══════╝╚═╝  ╚═╝
     """
     console.print(Panel(banner, title="[bold magenta]Yennefer AI[/bold magenta]",
-                        subtitle="v0.3.3", style="magenta"))
+                        subtitle="v0.3.4", style="magenta"))
 
 
 async def main():
