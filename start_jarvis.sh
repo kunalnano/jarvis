@@ -1,5 +1,5 @@
 #!/bin/bash
-# Yennefer Launcher - Mac
+# Jarvis Launcher - Mac
 
 cd "$(dirname "$0")"
 source .venv/bin/activate

@@ -49,14 +49,14 @@ def make_client(tmp_path):
     )
     app = FastAPI()
 
-    async def ask_yennefer(question):
+    async def ask_jarvis(question):
         return f"Asked: {question}. Second sentence. Third sentence. Fourth sentence."
 
     playbooks = FakePlaybooks()
     install_shortcuts_routes(
         app,
         {"shortcuts": {"bearer_token": "test-token", "briefs_dir": str(briefs)}},
-        ask_yennefer,
+        ask_jarvis,
         playbooks,
     )
     return TestClient(app), playbooks

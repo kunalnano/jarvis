@@ -2,9 +2,9 @@
 set -uo pipefail
 setopt typeset_silent
 
-ROOT="${YENNEFER_ROOT:-/Users/alsharma/Projects/yennefer}"
-OVERLAY_APP="${YENNEFER_OVERLAY_APP:-/Users/alsharma/Projects/yennefer-overlay/build/Build/Products/Debug/YenneferOverlay.app}"
-ENV_FILE="${YENNEFER_ENV_FILE:-$ROOT/.env}"
+ROOT="${JARVIS_ROOT:-/Users/alsharma/Projects/jarvis}"
+OVERLAY_APP="${JARVIS_OVERLAY_APP:-/Users/alsharma/Projects/jarvis-overlay/build/Build/Products/Debug/JarvisOverlay.app}"
+ENV_FILE="${JARVIS_ENV_FILE:-$ROOT/.env}"
 UID_VALUE="$(id -u)"
 REPAIR=false
 
@@ -13,7 +13,7 @@ for arg in "$@"; do
     --repair) REPAIR=true ;;
     --check) REPAIR=false ;;
     -h|--help)
-      print "usage: scripts/yennefer-doctor.zsh [--check|--repair]"
+      print "usage: scripts/jarvis-doctor.zsh [--check|--repair]"
       exit 0
       ;;
   esac
@@ -120,32 +120,32 @@ check_url() {
 
 load_env >/dev/null
 
-say_line "Yennefer doctor ($(date '+%Y-%m-%d %H:%M:%S'))"
+say_line "Jarvis doctor ($(date '+%Y-%m-%d %H:%M:%S'))"
 say_line "mode: $([[ "$REPAIR" == true ]] && print repair || print check)"
 
-if ! check_url "Yennefer backend" "http://127.0.0.1:4343/api/commands"; then
+if ! check_url "Jarvis backend" "http://127.0.0.1:4343/api/commands"; then
   if [[ "$REPAIR" == true ]]; then
-    kickstart_agent "ai.darkvector.yennefer-server" "$HOME/Library/LaunchAgents/ai.darkvector.yennefer-server.plist"
+    kickstart_agent "ai.darkvector.jarvis-server" "$HOME/Library/LaunchAgents/ai.darkvector.jarvis-server.plist"
     sleep 1
-    check_url "Yennefer backend" "http://127.0.0.1:4343/api/commands" || true
+    check_url "Jarvis backend" "http://127.0.0.1:4343/api/commands" || true
   fi
 fi
 
 if ! check_url "Chatterbox voice" "http://127.0.0.1:8004/health"; then
   if [[ "$REPAIR" == true ]]; then
-    kickstart_agent "ai.darkvector.yennefer-chatterbox" "$HOME/Library/LaunchAgents/ai.darkvector.yennefer-chatterbox.plist"
+    kickstart_agent "ai.darkvector.jarvis-chatterbox" "$HOME/Library/LaunchAgents/ai.darkvector.jarvis-chatterbox.plist"
     sleep 2
     check_url "Chatterbox voice" "http://127.0.0.1:8004/health" || true
   fi
 fi
 
-if pgrep -fx "$OVERLAY_APP/Contents/MacOS/YenneferOverlay" >/dev/null 2>&1 || pgrep -f "YenneferOverlay.app/Contents/MacOS/YenneferOverlay" >/dev/null 2>&1; then
-  ok "Yennefer overlay process running"
+if pgrep -fx "$OVERLAY_APP/Contents/MacOS/JarvisOverlay" >/dev/null 2>&1 || pgrep -f "JarvisOverlay.app/Contents/MacOS/JarvisOverlay" >/dev/null 2>&1; then
+  ok "Jarvis overlay process running"
 else
-  warn "Yennefer overlay process not running"
+  warn "Jarvis overlay process not running"
   if [[ "$REPAIR" == true ]]; then
     if [[ -d "$OVERLAY_APP" ]]; then
-      act "opening Yennefer overlay"
+      act "opening Jarvis overlay"
       open "$OVERLAY_APP"
     else
       warn "overlay app bundle not found at $OVERLAY_APP"

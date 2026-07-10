@@ -1,10 +1,10 @@
 """
-Tools - Yennefer's hands. A registry of named actions she can invoke on the Mac.
+Tools - Jarvis's hands. A registry of named actions it can invoke on the Mac.
 
 Safe-by-default: read-only / benign tools auto-run. Anything side-effectful
 (arbitrary shell, registered agents) is GATED - the server returns a
-confirmation request and only runs on explicit user approval. This keeps her
-Siri-like (she just does things) without letting a local model execute whatever
+confirmation request and only runs on explicit user approval. This keeps Jarvis
+Siri-like (it just does things) without letting a local model execute whatever
 it hallucinates.
 """
 
@@ -76,7 +76,7 @@ def _fetch_url(url: str, timeout: float = 12.0, max_bytes: int = 1_500_000) -> t
     req = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "Yennefer/1.0 (+local assistant)",
+            "User-Agent": "Jarvis/1.0 (+local assistant)",
             "Accept": "text/html,application/json,text/plain;q=0.9,*/*;q=0.5",
         },
     )
@@ -219,16 +219,16 @@ async def capabilities(_args, _cfg):
     return (
         "I can search the web, check weather, read the active Chrome or Safari tab, fetch a URL, "
         "search and read the local Vault, check Prometheus system status, list projects, "
-        "check git repos, open apps or URLs, repair Yennefer services, and run curated skills or shell commands after confirmation. "
+        "check git repos, open apps or URLs, repair Jarvis services, and run curated skills or shell commands after confirmation. "
         "Fast commands bypass the local LLM; open-ended conversation still uses the slower local model."
     )
 
 
-async def yennefer_doctor(args, _cfg):
+async def jarvis_doctor(args, _cfg):
     repair = bool(args.get("repair", True))
-    script = Path(__file__).parent.parent / "scripts" / "yennefer-doctor.zsh"
+    script = Path(__file__).parent.parent / "scripts" / "jarvis-doctor.zsh"
     if not script.exists():
-        return f"Yennefer doctor script is missing: {script}"
+        return f"Jarvis doctor script is missing: {script}"
     mode = "--repair" if repair else "--check"
     return await _run([str(script), mode], timeout=90.0, cwd=str(script.parent.parent))
 
@@ -336,7 +336,7 @@ def _web_search_serper(query: str, count: int) -> tuple[str, list[dict]]:
         headers={
             "X-API-KEY": api_key,
             "Content-Type": "application/json",
-            "User-Agent": "Yennefer/1.0 (+local assistant)",
+            "User-Agent": "Jarvis/1.0 (+local assistant)",
         },
     )
     with urllib.request.urlopen(req, timeout=12.0) as resp:
@@ -361,7 +361,7 @@ def _web_search_brave(query: str, count: int) -> tuple[str, list[dict]]:
         headers={
             "Accept": "application/json",
             "X-Subscription-Token": api_key,
-            "User-Agent": "Yennefer/1.0 (+local assistant)",
+            "User-Agent": "Jarvis/1.0 (+local assistant)",
         },
     )
     with urllib.request.urlopen(req, timeout=12.0) as resp:
@@ -668,7 +668,7 @@ async def run_shell(args, _cfg):
 
 
 # ---- DAR-128: skill dispatch ------------------------------------------
-# Yennefer runs curated DVC Claude Code skills via `claude -p "/<id>"`.
+# Jarvis runs curated DVC Claude Code skills via `claude -p "/<id>"`.
 # The registry is code-level so it works regardless of which YAML config is
 # loaded; per-skill overrides (command/cwd/timeout/aliases) may be supplied in
 # config 'skills', and any directory under ~/.claude/skills is also runnable.
@@ -770,10 +770,10 @@ REGISTRY = {
         "description": "List the user's project directories under ~/Projects and ~/Documents/ai.",
         "parameters": {"type": "object", "properties": {}}},
     "capabilities": {"handler": capabilities, "safe": True,
-        "description": "Explain what Yennefer can do right now from the actual local tool registry.",
+        "description": "Explain what Jarvis can do right now from the actual local tool registry.",
         "parameters": {"type": "object", "properties": {}}},
-    "yennefer_doctor": {"handler": yennefer_doctor, "safe": True,
-        "description": "Check and repair Yennefer services: backend, overlay, Chatterbox voice, local Prometheus LM Studio, and Stormbreaker/Windows LM Studio fallback. Does not print secrets.",
+    "jarvis_doctor": {"handler": jarvis_doctor, "safe": True,
+        "description": "Check and repair Jarvis services: backend, overlay, Chatterbox voice, local Prometheus LM Studio, and Stormbreaker/Windows LM Studio fallback. Does not print secrets.",
         "parameters": {"type": "object", "properties": {"repair": {"type": "boolean", "description": "true to kickstart/open missing services; false to only check status"}}}},
     "web_search": {"handler": web_search, "safe": True,
         "description": "Search the live web for current information, sports fixtures, news, schedules, products, and facts that may have changed recently. Uses Serper/Google/Brave API keys when configured and a no-key Bing RSS fallback otherwise.",
@@ -803,7 +803,7 @@ REGISTRY = {
         "description": "Invoke a registered agent/script by name (names defined in config 'agents'). Side-effectful; the user confirms first.",
         "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "args": {"type": "string", "description": "optional extra arguments"}}, "required": ["name"]}},
     "run_skill": {"handler": run_skill, "safe": False,
-        "description": "Run one of Yennefer's curated DVC skills by id or phrase via Claude Code (e.g. skill='dvc-eod-done-sweep' for 'run the done sweep'; 'bookmark review' -> twitter-bookmark-review). Side-effectful; the user confirms first. Unknown skills are reported back, never invented.",
+        "description": "Run one of Jarvis's curated DVC skills by id or phrase via Claude Code (e.g. skill='dvc-eod-done-sweep' for 'run the done sweep'; 'bookmark review' -> twitter-bookmark-review). Side-effectful; the user confirms first. Unknown skills are reported back, never invented.",
         "parameters": {"type": "object", "properties": {"skill": {"type": "string", "description": "Skill id or freeform phrase, e.g. 'dvc-eod-done-sweep' or 'run the done sweep'"}, "args": {"type": "string", "description": "optional extra arguments passed to the skill"}}, "required": ["skill"]}},
     "run_shell": {"handler": run_shell, "safe": False,
         "description": "Run an arbitrary shell command on the Mac. Only when no specific tool fits. Always confirmed by the user first.",

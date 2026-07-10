@@ -1,4 +1,4 @@
-# Yennefer Configuration - Mac connecting to Windows LM Studio + ElevenLabs TTS
+# Jarvis Configuration - Mac connecting to Windows LM Studio + ElevenLabs TTS
 
 # Voice Input Settings
 voice_input:
@@ -30,7 +30,7 @@ llm:
 logging:
   level: INFO
 
-# Proactive / ambient presence (Jarvis-style: she speaks unprompted)
+# Proactive / ambient presence
 presence:
   enabled: true
   random_interval_minutes: [30, 75]   # jittered range between spontaneous musings

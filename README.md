@@ -1,5 +1,5 @@
 <!-- Animated Header -->
-<img width="100%" src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=12,19,20,24&height=230&section=header&text=⚡%20Yennefer&fontSize=70&fontColor=ffffff&animation=twinkling&fontAlignY=35&desc=Local%20AI%20with%20attitude&descSize=20&descAlignY=55" />
+<img width="100%" src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=12,19,20,24&height=230&section=header&text=⚡%20Jarvis&fontSize=70&fontColor=ffffff&animation=twinkling&fontAlignY=35&desc=Local%20AI%20with%20attitude&descSize=20&descAlignY=55" />
 
 <div align="center">
 
@@ -18,10 +18,10 @@
 <br>
 
 <!-- Dynamic GitHub Badges -->
-<img src="https://img.shields.io/github/last-commit/kunalnano/yennefer?style=flat-square&color=a855f7&label=Last%20Commit" />
-<img src="https://img.shields.io/github/stars/kunalnano/yennefer?style=flat-square&color=f97316&label=Stars" />
-<img src="https://img.shields.io/github/repo-size/kunalnano/yennefer?style=flat-square&color=00d084&label=Size" />
-<img src="https://img.shields.io/github/issues/kunalnano/yennefer?style=flat-square&color=6366f1&label=Issues" />
+<img src="https://img.shields.io/github/last-commit/kunalnano/jarvis?style=flat-square&color=a855f7&label=Last%20Commit" />
+<img src="https://img.shields.io/github/stars/kunalnano/jarvis?style=flat-square&color=f97316&label=Stars" />
+<img src="https://img.shields.io/github/repo-size/kunalnano/jarvis?style=flat-square&color=00d084&label=Size" />
+<img src="https://img.shields.io/github/issues/kunalnano/jarvis?style=flat-square&color=6366f1&label=Issues" />
 
 <br><br>
 
@@ -39,7 +39,7 @@
 
 ## 🎭 What Is This?
 
-Yennefer is a conversational AI that runs **entirely on your machine** using [LM Studio](https://lmstudio.ai). She's not another sycophantic assistant—she has opinions, standards, and won't coddle you.
+Jarvis is a conversational AI that runs **entirely on your machine** using [LM Studio](https://lmstudio.ai). She's not another sycophantic assistant—she has opinions, standards, and won't coddle you.
 
 The only cloud touch is [ElevenLabs](https://elevenlabs.io) for premium neural TTS (optional—free tier gives you 10K chars/month).
 
@@ -55,7 +55,7 @@ The only cloud touch is [ElevenLabs](https://elevenlabs.io) for premium neural T
 > 
 > ✈️ Works offline (except voice synthesis)
 
-### Why Yennefer?
+### Why Jarvis?
 
 > 🎯 Direct feedback, not corporate pleasantries
 > 
@@ -71,19 +71,19 @@ The only cloud touch is [ElevenLabs](https://elevenlabs.io) for premium neural T
 
 <div align="center">
 
-<img src="assets/terminal-demo.svg" alt="Yennefer Terminal Demo" width="100%" />
+<img src="assets/terminal-demo.svg" alt="Jarvis Terminal Demo" width="100%" />
 
-<sub>Yennefer roasting someone's Rust rewrite idea. As she does.</sub>
+<sub>Jarvis roasting someone's Rust rewrite idea. As she does.</sub>
 
 </div>
 
 ---
 
-### ⚔️ Yennefer vs. The Cloud
+### ⚔️ Jarvis vs. The Cloud
 
 <div align="center">
 
-| | <img src="https://img.shields.io/badge/Yennefer-A855F7?style=flat-square" /> | <img src="https://img.shields.io/badge/ChatGPT-74AA9C?style=flat-square" /> | <img src="https://img.shields.io/badge/Claude_API-D97706?style=flat-square" /> | <img src="https://img.shields.io/badge/Alexa/Siri-1e1e2e?style=flat-square" /> |
+| | <img src="https://img.shields.io/badge/Jarvis-A855F7?style=flat-square" /> | <img src="https://img.shields.io/badge/ChatGPT-74AA9C?style=flat-square" /> | <img src="https://img.shields.io/badge/Claude_API-D97706?style=flat-square" /> | <img src="https://img.shields.io/badge/Alexa/Siri-1e1e2e?style=flat-square" /> |
 |:--|:--:|:--:|:--:|:--:|
 | **Privacy** | ✅ 100% Local | ❌ Cloud | ❌ Cloud | ❌ Cloud |
 | **Monthly Cost** | $0* | $20+ | $20+ | Free (with limits) |
@@ -109,7 +109,7 @@ The only cloud touch is [ElevenLabs](https://elevenlabs.io) for premium neural T
 flowchart LR
     subgraph LOCAL ["  💻 YOUR MACHINE  "]
         direction LR
-        A[" 👤 You "] -->|"⌨️ Input"| B[" ⚡ Yennefer\nOrchestrator "]
+        A[" 👤 You "] -->|"⌨️ Input"| B[" ⚡ Jarvis\nOrchestrator "]
         B -->|"💭 Query"| C[" 🧠 LM Studio\nLocal LLM "]
         C -->|"💬 Response"| B
     end
@@ -137,7 +137,7 @@ flowchart LR
 ➡️
 </td>
 <td align="center">
-<img src="https://img.shields.io/badge/Yennefer-A855F7?style=flat-square&logo=bot&logoColor=white" /><br>
+<img src="https://img.shields.io/badge/Jarvis-A855F7?style=flat-square&logo=bot&logoColor=white" /><br>
 <sub>Orchestrator</sub>
 </td>
 <td align="center">
@@ -172,7 +172,7 @@ flowchart LR
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                         💻  YOUR MACHINE                            │
 │  ┌──────────┐    ┌─────────────────┐    ┌─────────────────────┐  │
-│  │  👤 You   │───▶│  ⚡ Yennefer    │───▶│  🧠 LM Studio      │  │
+│  │  👤 You   │───▶│  ⚡ Jarvis    │───▶│  🧠 LM Studio      │  │
 │  │ keyboard │    │  orchestrator  │    │  local LLM engine  │  │
 │  └──────────┘    └────────┬────────┘    └─────────────────────┘  │
 │                        │                                          │
@@ -198,7 +198,7 @@ flowchart LR
 |:--:|:--------|:------------|
 | 🧠 | **Local LLM** | Any GGUF model via LM Studio—Nemotron, Qwen, Llama, Mistral, DeepSeek |
 | 🎙️ | **Premium Voice** | ElevenLabs neural TTS with custom voice cloning support |
-| 🎭 | **Real Personality** | Sharp, confident, witty—inspired by Yennefer of Vengerberg |
+| 🎭 | **Real Personality** | Sharp, confident, witty—inspired by Jarvis of Vengerberg |
 | 📊 | **Token Tracking** | Visual context window with auto-trim at 85% capacity |
 | 💳 | **Credits Monitor** | Real-time ElevenLabs character usage tracking |
 | 🧹 | **Thinking Stripper** | Auto-removes `<think>` tags so reasoning isn't spoken aloud |
@@ -228,8 +228,8 @@ flowchart LR
 
 ```bash
 # Clone the repo
-git clone https://github.com/kunalnano/yennefer.git
-cd yennefer
+git clone https://github.com/kunalnano/jarvis.git
+cd jarvis
 
 # Windows
 .\setup.bat
@@ -266,13 +266,13 @@ ELEVENLABS_VOICE_ID=your_voice_id     # From your Voice Library
 </td>
 <td>
 
-**2️⃣ Run Yennefer**
+**2️⃣ Run Jarvis**
 ```bash
 # Windows
-.\start_yennefer.bat
+.\start_jarvis.bat
 
 # Mac/Linux
-./start_yennefer.sh
+./start_jarvis.sh
 ```
 
 </td>
@@ -317,7 +317,7 @@ ELEVENLABS_VOICE_ID=your_voice_id     # From your Voice Library
 
 </div>
 
-> 🧠 **Reasoning models** that use `<think>...</think>` tags are automatically filtered. Yennefer thinks before speaking, but keeps her thoughts to herself.
+> 🧠 **Reasoning models** that use `<think>...</think>` tags are automatically filtered. Jarvis thinks before speaking, but keeps her thoughts to herself.
 
 <!-- Animated Divider -->
 <img src="https://user-images.githubusercontent.com/73097560/115834477-dbab4500-a447-11eb-908a-139a6edaec5c.gif">
@@ -355,7 +355,7 @@ Running LM Studio on a beefy Windows rig but want to talk from your Mac?
 ┌─────────────────┐                    ┌─────────────────┐
 │  🍎 Mac         │    LAN/WiFi        │  🪟 Windows     │
 │  (thin client)  │◄──────────────────▶│  (GPU server)   │
-│  Yennefer CLI   │                    │  LM Studio      │
+│  Jarvis CLI   │                    │  LM Studio      │
 └─────────────────┘                    └─────────────────┘
 ```
 
@@ -374,7 +374,7 @@ Running LM Studio on a beefy Windows rig but want to talk from your Mac?
 
 <div align="center">
 
-*Yennefer doesn't do corporate AI pleasantries. She's helpful, but she'll call out bad ideas.*
+*Jarvis doesn't do corporate AI pleasantries. She's helpful, but she'll call out bad ideas.*
 
 </div>
 
@@ -384,21 +384,21 @@ Running LM Studio on a beefy Windows rig but want to talk from your Mac?
 
 > **You:** I'm thinking of learning three programming languages at once.
 >
-> **Yennefer:** How ambitious. You'll drown in syntax before you master any of them. Pick one. Learn it properly. Then consider the others.
+> **Jarvis:** How ambitious. You'll drown in syntax before you master any of them. Pick one. Learn it properly. Then consider the others.
 
 </td>
 <td width="33%">
 
 > **You:** Can you help me with my code?
 >
-> **Yennefer:** Show me what you've got. I'll tell you what's wrong with it.
+> **Jarvis:** Show me what you've got. I'll tell you what's wrong with it.
 
 </td>
 <td width="33%">
 
 > **You:** I want to build a startup but I have no idea what problem to solve.
 >
-> **Yennefer:** Then you don't want to build a startup—you want the *idea* of building one. Find a problem that genuinely irritates you first.
+> **Jarvis:** Then you don't want to build a startup—you want the *idea* of building one. Find a problem that genuinely irritates you first.
 
 </td>
 </tr>
@@ -406,7 +406,7 @@ Running LM Studio on a beefy Windows rig but want to talk from your Mac?
 
 <div align="center">
 
-*She's an equal, not a servant. Inspired by Yennefer of Vengerberg—confident, sharp, doesn't suffer fools gladly.*
+*She's an equal, not a servant. Inspired by Jarvis of Vengerberg—confident, sharp, doesn't suffer fools gladly.*
 
 </div>
 
@@ -416,7 +416,7 @@ Running LM Studio on a beefy Windows rig but want to talk from your Mac?
 ## 🗂️ Project Structure
 
 ```
-yennefer/
+jarvis/
 ├── jarvis/                 # Core Python package
 │   ├── main.py             # Entry point + ASCII banner
 │   ├── orchestrator.py     # Conversation loop controller
@@ -428,8 +428,8 @@ yennefer/
 │   └── jarvis.yaml         # Main configuration file
 ├── .env.example            # API key template
 ├── requirements.txt        # Python dependencies
-├── start_yennefer.bat      # Windows launcher
-├── start_yennefer.sh       # Mac/Linux launcher
+├── start_jarvis.bat      # Windows launcher
+├── start_jarvis.sh       # Mac/Linux launcher
 ├── CHANGELOG.md            # Version history
 └── README.md               # You are here
 ```
@@ -489,7 +489,7 @@ yennefer/
 
 | Feature | Status |
 |:--------|:------:|
-| Wake word detection — "Hey Yennefer" | 🔲 |
+| Wake word detection — "Hey Jarvis" | 🔲 |
 | Streaming TTS — speak before generation completes | 🔲 |
 | Interrupt handling — stop mid-sentence | 🔲 |
 
@@ -546,10 +546,10 @@ PRs welcome. See [CHANGELOG.md](CHANGELOG.md) for what's been done.
 
 **If you find this useful, star the repo.**
 
-*Yennefer doesn't ask for validation, but the algorithm appreciates it.*
+*Jarvis doesn't ask for validation, but the algorithm appreciates it.*
 
 <br>
 
-![GitHub stars](https://img.shields.io/github/stars/kunalnano/yennefer?style=social)
+![GitHub stars](https://img.shields.io/github/stars/kunalnano/jarvis?style=social)
 
 </div>

@@ -17,7 +17,7 @@ from jarvis.resource_conductor import (
 NOW = datetime(2026, 7, 5, 20, 0, tzinfo=timezone.utc)
 
 REGISTRY = """
-## Compute routing policy (Yennefer = conductor, planned DAR-40)
+## Compute routing policy (Jarvis = conductor, planned DAR-40)
 | Task class | Engine | Where |
 |---|---|---|
 | Ambient musings, triage, summarization, first-pass drafts, embeddings | Local LM (Qwen/Gemma via LM Studio) | Stormbreaker |

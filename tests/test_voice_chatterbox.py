@@ -24,12 +24,12 @@ def test_chatterbox_config_parsed():
         'speed': 1.15,
         'chatterbox': {
             'api_base': 'http://stormbreaker.example:8004/',
-            'voice': 'yennefer.wav',
+            'voice': 'jarvis.wav',
             'params': {'exaggeration': 0.6},
         },
     })
     assert v.chatterbox_api_base == 'http://stormbreaker.example:8004'  # trailing slash stripped
-    assert v.chatterbox_voice == 'yennefer.wav'
+    assert v.chatterbox_voice == 'jarvis.wav'
     assert v.chatterbox_speed == 1.15  # inherits voice_output speed when unset
     assert v.chatterbox_params == {'exaggeration': 0.6}
 

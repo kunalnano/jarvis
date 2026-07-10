@@ -1,7 +1,7 @@
 """
-Graph memory - Yennefer's durable continuity via the vault-rag Neo4j sidecar.
+Graph memory - Jarvis's durable continuity via the vault-rag Neo4j sidecar.
 
-Implements the same contract as spec C2 (spec-dvc-service-mesh-yennefer.md):
+Implements the same contract as spec C2 (spec-dvc-service-mesh-jarvis.md):
 every fired presence trigger is recorded as a LifeEvent node in the "live"
 graph namespace, and before reacting she pulls continuity context (prior
 observations of the same trigger class, open Gap/Decision nodes touching the
@@ -25,7 +25,7 @@ console = Console()
 DEFAULT_ENDPOINT = "http://127.0.0.1:8742"
 # vault-rag binds 127.0.0.1 and trusts this header (tailscale serve is the
 # only remote ingress); local callers identify themselves with it.
-DEFAULT_AUTH_USER = "yennefer@local"
+DEFAULT_AUTH_USER = "jarvis@local"
 # Slightly above helm-gold's 1.5s fuse: cold Neo4j label scans can exceed it,
 # and a transient timeout costs a false "memory unavailable" announcement.
 DEFAULT_TIMEOUT_SECONDS = 2.5
@@ -107,14 +107,14 @@ class GraphMemory:
         ts = ts or utc_ts()
         payload = {
             "namespace": "live",
-            "source_path": f"yennefer://observations/{trigger}/{ts}",
+            "source_path": f"jarvis://observations/{trigger}/{ts}",
             "trigger": trigger,
             "severity": severity,
             "text": text,
             "context": context,
             "ts": ts,
             "provenance": {
-                "source_system": "yennefer-standalone",
+                "source_system": "jarvis-standalone",
                 "emitter": "presence",
                 "host": socket.gethostname(),
             },

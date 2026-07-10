@@ -1,4 +1,6 @@
 import asyncio
+import json
+import stat
 
 import httpx
 from fastapi.testclient import TestClient
@@ -24,7 +26,7 @@ def test_api_commands_returns_overlay_palette_contract():
     assert commands
     assert {"id", "name", "description", "trigger"} <= set(commands[0])
     assert any(command["id"] == "status" for command in commands)
-    assert any(command["id"] == "yennefer-doctor" for command in commands)
+    assert any(command["id"] == "jarvis-doctor" for command in commands)
 
 
 def test_voice_status_endpoint_reports_runtime_voice(monkeypatch):
@@ -94,7 +96,7 @@ def test_agent_status_endpoint_reports_local_operating_packet(monkeypatch):
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["agent_id"] == "yennefer"
+    assert payload["agent_id"] == "jarvis"
     assert payload["kind"] == "local_operating_agent"
     assert payload["status"] == "attention"
     assert payload["version"] == server.__version__
@@ -115,7 +117,7 @@ def test_agent_status_endpoint_reports_local_operating_packet(monkeypatch):
     alias = TestClient(app).get("/api/pet/status")
     assert alias.status_code == 200
     alias_payload = alias.json()
-    assert alias_payload["agent_id"] == "yennefer"
+    assert alias_payload["agent_id"] == "jarvis"
     assert {"mood", "label", "detail", "speech"} <= set(alias_payload)
     assert probes == [True, False]
 
@@ -158,6 +160,123 @@ def test_agent_status_probe_timeout_returns_cached_voice(monkeypatch):
     assert payload["status"] == "attention"
 
 
+def test_capture_endpoint_persists_local_inbox(monkeypatch, tmp_path):
+    monkeypatch.setitem(server.CONFIG, "capture", {"inbox_dir": str(tmp_path)})
+
+    response = TestClient(app).post(
+        "/api/capture",
+        json={
+            "text": "Remind me to review LOCAL-156 with Siri",
+            "source": "siri-app-intent",
+            "context": {"surface": "shortcuts"},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["reply"].startswith("Captured as")
+    assert payload["item"]["source"] == "siri-app-intent"
+    assert payload["item"]["classification"]["label"] in {"task", "agent_request"}
+    assert payload["item"]["side_effects_performed"] == []
+    assert payload["capture"]["today_count"] == 1
+
+    files = list(tmp_path.glob("*.jsonl"))
+    assert len(files) == 1
+    saved = json.loads(files[0].read_text(encoding="utf-8").strip())
+    assert saved["text"] == "Remind me to review LOCAL-156 with Siri"
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
+    assert stat.S_IMODE(files[0].stat().st_mode) == 0o600
+
+    inbox = TestClient(app).get("/api/capture/inbox?limit=5")
+    assert inbox.status_code == 200
+    assert inbox.json()["captures"][0]["id"] == payload["item"]["id"]
+
+
+def test_agent_status_includes_capture_summary(monkeypatch, tmp_path):
+    monkeypatch.setitem(server.CONFIG, "capture", {"inbox_dir": str(tmp_path)})
+    server._store_capture("Capture this from Siri", source="siri-app-intent")
+
+    async def fake_voice_status(probe_chatterbox=False):
+        return {
+            "engine": "chatterbox",
+            "preferred_engine": "chatterbox",
+            "initialized": True,
+            "degraded": False,
+            "fallback_warning": "",
+        }
+
+    monkeypatch.setattr(server.VOICE, "runtime_status_async", fake_voice_status)
+    monkeypatch.setattr(server.BRAIN, "last_endpoint_errors", [])
+    monkeypatch.setattr(
+        server.PLAYBOOKS.state,
+        "load",
+        lambda: {"active": None, "queue": [], "drafts": [], "events": [], "paused": False},
+    )
+
+    response = TestClient(app).get("/api/agent/status")
+
+    assert response.status_code == 200
+    capture = response.json()["capture"]
+    assert capture["inbox_dir"] == str(tmp_path)
+    assert capture["today_count"] == 1
+    assert capture["last_item"]["source"] == "siri-app-intent"
+    assert "text" not in capture["last_item"]
+    assert "context" not in capture["last_item"]
+
+
+def test_legacy_query_routes_return_plain_text_and_speak(monkeypatch):
+    calls = []
+    queued = []
+
+    async def fake_ask(question):
+        calls.append(question)
+        return f"Asked legacy: {question}"
+
+    monkeypatch.setattr(server, "_ask_for_shortcuts", fake_ask)
+    monkeypatch.setattr(server, "_queue_speech", queued.append)
+
+    response = TestClient(app).post("/api/query", json={"question": "Status?"})
+
+    assert response.status_code == 200
+    assert response.text == "Asked legacy: Status?"
+    assert response.headers["content-type"].startswith("text/plain")
+    assert calls == ["Status?"]
+    assert queued == ["Asked legacy: Status?"]
+
+
+def test_legacy_query_get_can_skip_speech(monkeypatch):
+    queued = []
+
+    async def fake_ask(question):
+        return f"Asked legacy: {question}"
+
+    monkeypatch.setattr(server, "_ask_for_shortcuts", fake_ask)
+    monkeypatch.setattr(server, "_queue_speech", queued.append)
+
+    response = TestClient(app).get("/api/ask?q=Ping&speak=false")
+
+    assert response.status_code == 200
+    assert response.text == "Asked legacy: Ping"
+    assert queued == []
+
+
+def test_legacy_query_uses_fast_command_router(monkeypatch):
+    async def fake_execute(name, args, cfg):
+        assert name == "capabilities"
+        return "Jarvis fast capabilities."
+
+    async def fail_ask(question):
+        raise AssertionError("legacy fast command should not call the model")
+
+    monkeypatch.setattr("jarvis.server.tools.execute", fake_execute)
+    monkeypatch.setattr(server, "_ask_for_shortcuts", fail_ask)
+
+    response = TestClient(app).get("/api/query?q=what%20can%20you%20do&speak=false")
+
+    assert response.status_code == 200
+    assert response.text == "Jarvis fast capabilities."
+
+
 def test_reload_chatterbox_endpoint_promotes_voice(monkeypatch):
     async def fake_promote(probe_audio=False):
         assert probe_audio is True
@@ -171,12 +290,32 @@ def test_reload_chatterbox_endpoint_promotes_voice(monkeypatch):
     assert response.json()["promoted"] is True
 
 
-def test_yennefer_doctor_command_invokes_repair_script(monkeypatch):
+def test_jarvis_doctor_command_invokes_repair_script(monkeypatch):
     calls = []
 
     async def fake_run(cmd, timeout=60.0, cwd=None):
         calls.append((cmd, timeout, cwd))
-        return "OK    Yennefer backend ready"
+        return "OK    Jarvis backend ready"
+
+    monkeypatch.setattr("jarvis.tools._run", fake_run)
+
+    response = TestClient(app).post(
+        "/api/chat",
+        json={"message": "repair jarvis services", "speak": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["command"] == "jarvis-doctor"
+    assert calls
+    assert calls[0][0][-1] == "--repair"
+
+
+def test_legacy_yennefer_doctor_phrase_still_routes(monkeypatch):
+    calls = []
+
+    async def fake_run(cmd, timeout=60.0, cwd=None):
+        calls.append((cmd, timeout, cwd))
+        return "OK    Jarvis backend ready"
 
     monkeypatch.setattr("jarvis.tools._run", fake_run)
 
@@ -186,9 +325,8 @@ def test_yennefer_doctor_command_invokes_repair_script(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert response.json()["command"] == "yennefer-doctor"
+    assert response.json()["command"] == "jarvis-doctor"
     assert calls
-    assert calls[0][0][-1] == "--repair"
 
 
 def test_check_system_status_uses_fast_command_path(monkeypatch):

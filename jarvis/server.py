@@ -1,8 +1,8 @@
 """
-Yennefer chat server - a web chat box with hands.
+Jarvis chat server - a web chat box with hands.
 
 FastAPI backend that serves a chat UI and runs an LLM tool-calling loop against
-LM Studio. Yennefer can answer, and she can invoke registered tools/agents on
+LM Studio. Jarvis can answer, and it can invoke registered tools/agents on
 the Mac. Safe tools auto-run; side-effectful ones return a confirmation request
 the UI must approve before they execute.
 
@@ -11,14 +11,16 @@ Run:  python -m jarvis.server     (then open the printed URL)
 
 import json
 import asyncio
+import os
 import re
+import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from pydantic import BaseModel, Field
 
 from . import __version__
 from .brain import Brain, extract_speakable
@@ -59,17 +61,17 @@ COMMANDS = [
     {
         "id": "capabilities",
         "name": "Capabilities",
-        "description": "Show what Yennefer can do right now.",
+        "description": "Show what Jarvis can do right now.",
         "trigger": "what can you do",
         "tool": "capabilities",
         "args": {},
     },
     {
-        "id": "yennefer-doctor",
-        "name": "Yennefer Doctor",
+        "id": "jarvis-doctor",
+        "name": "Jarvis Doctor",
         "description": "Check and repair backend, overlay, voice, and LM Studio failover.",
-        "trigger": "repair yennefer services",
-        "tool": "yennefer_doctor",
+        "trigger": "repair jarvis services",
+        "tool": "jarvis_doctor",
         "args": {"repair": True},
     },
     {
@@ -105,20 +107,20 @@ COMMANDS = [
         "args": {"query": "Lisbon"},
     },
     {
-        "id": "git-yennefer",
-        "name": "Yennefer Git Status",
-        "description": "Show git status for the Yennefer backend.",
-        "trigger": "show git status for /Users/alsharma/Projects/yennefer",
+        "id": "git-jarvis",
+        "name": "Jarvis Backend Git Status",
+        "description": "Show git status for the Jarvis backend.",
+        "trigger": "show git status for /Users/alsharma/Projects/jarvis",
         "tool": "git_status",
-        "args": {"path": "/Users/alsharma/Projects/yennefer"},
+        "args": {"path": "/Users/alsharma/Projects/jarvis"},
     },
     {
-        "id": "git-yennefer-overlay",
-        "name": "Overlay Git Status",
-        "description": "Show git status for the Yennefer overlay.",
-        "trigger": "show git status for /Users/alsharma/Projects/yennefer-overlay",
+        "id": "git-jarvis-overlay",
+        "name": "Jarvis Overlay Git Status",
+        "description": "Show git status for the Jarvis overlay.",
+        "trigger": "show git status for /Users/alsharma/Projects/jarvis-overlay",
         "tool": "git_status",
-        "args": {"path": "/Users/alsharma/Projects/yennefer-overlay"},
+        "args": {"path": "/Users/alsharma/Projects/jarvis-overlay"},
     },
 ]
 
@@ -133,7 +135,7 @@ SYSTEM = (
 )
 
 HISTORY = [{"role": "system", "content": SYSTEM}]
-app = FastAPI(title="Yennefer")
+app = FastAPI(title="Jarvis")
 
 
 class ChatIn(BaseModel):
@@ -141,6 +143,13 @@ class ChatIn(BaseModel):
     speak: bool = False
     confirm: dict | None = None
     decline: bool = False
+
+
+class CaptureIn(BaseModel):
+    text: str = Field(min_length=1, max_length=20_000)
+    source: str = Field(default="siri", max_length=100)
+    speak: bool = False
+    context: dict | None = None
 
 
 def _utc_now() -> str:
@@ -239,6 +248,134 @@ def _agent_resource_status() -> dict:
     }
 
 
+def _capture_dir() -> Path:
+    capture = CONFIG.get("capture", {}) or {}
+    inbox = Path(str(capture.get("inbox_dir") or "~/.jarvis/captures")).expanduser()
+    inbox.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        inbox.chmod(0o700)
+    except OSError:
+        pass
+    return inbox
+
+
+def _capture_file(day: str | None = None) -> Path:
+    day = day or date.today().isoformat()
+    return _capture_dir() / f"{day}.jsonl"
+
+
+def _classify_capture(text: str) -> dict:
+    lower = text.lower()
+    if "?" in text or re.match(r"\s*(what|why|how|who|when|where|should|can|could|would)\b", lower):
+        label = "question"
+        reason = "looks like a question"
+    elif re.search(r"\b(agent|codex|jarvis|yennefer|siri|run|build|debug|fix|ship|ticket)\b", lower):
+        label = "agent_request"
+        reason = "mentions agent or execution language"
+    elif re.search(r"\b(remind|todo|to-do|follow up|schedule|book|send|email|call|need to)\b", lower):
+        label = "task"
+        reason = "looks like a task or reminder"
+    elif re.search(r"\b(meeting|call with|prep|brief|agenda)\b", lower):
+        label = "meeting_note"
+        reason = "mentions meeting context"
+    else:
+        label = "note"
+        reason = "general captured note"
+    return {
+        "label": label,
+        "reason": reason,
+        "requires_confirmation_before_side_effects": True,
+    }
+
+
+def _capture_ack(item: dict) -> str:
+    label = item.get("classification", {}).get("label") or "note"
+    if label == "agent_request":
+        return "Captured as an agent request. I will hold it for review before taking action."
+    if label == "task":
+        return "Captured as a task. I will hold it in the Jarvis inbox for review."
+    if label == "question":
+        return "Captured as a question. I will keep it in the Jarvis inbox."
+    return "Captured. I will keep it in the Jarvis inbox."
+
+
+def _store_capture(text: str, source: str = "siri", context: dict | None = None) -> dict:
+    cleaned = " ".join((text or "").split())
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="capture text is required")
+    now = _utc_now()
+    item = {
+        "id": f"cap-{now.replace(':', '').replace('-', '').replace('.', '')}-{uuid.uuid4().hex[:8]}",
+        "captured_at": now,
+        "source": source or "siri",
+        "text": cleaned,
+        "classification": _classify_capture(cleaned),
+        "context": context or {},
+        "side_effects_performed": [],
+        "next_action": "review_in_jarvis_inbox",
+    }
+    path = _capture_file(now[:10])
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    if hasattr(os, "fchmod"):
+        try:
+            os.fchmod(descriptor, 0o600)
+        except OSError:
+            pass
+    with os.fdopen(descriptor, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(item, sort_keys=True) + "\n")
+    item["inbox_path"] = str(path)
+    return item
+
+
+def _load_captures(limit: int = 20) -> list[dict]:
+    limit = max(1, min(int(limit or 20), 100))
+    inbox = _capture_dir()
+    if not inbox.exists():
+        return []
+    items = []
+    for path in sorted(inbox.glob("*.jsonl"), reverse=True):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in reversed(lines):
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            item.setdefault("inbox_path", str(path))
+            items.append(item)
+            if len(items) >= limit:
+                return items
+    return items
+
+
+def _capture_status() -> dict:
+    today_path = _capture_file()
+    today_count = 0
+    if today_path.exists():
+        try:
+            today_count = sum(1 for line in today_path.read_text(encoding="utf-8").splitlines() if line.strip())
+        except OSError:
+            today_count = 0
+    recent = _load_captures(limit=1)
+    last_item = None
+    if recent:
+        item = recent[0]
+        last_item = {
+            key: item.get(key)
+            for key in ("id", "captured_at", "source", "classification", "next_action")
+        }
+    return {
+        "enabled": True,
+        "inbox_dir": str(_capture_dir()),
+        "today_count": today_count,
+        "last_item": last_item,
+    }
+
+
 def _agent_needs_attention(voice: dict, playbooks: dict, model: dict) -> list[str]:
     needs = []
     if not voice.get("initialized"):
@@ -286,7 +423,7 @@ def _pet_compat_fields(
             voice.get("fallback_warning")
             or voice.get("degraded_reason")
             or "; ".join(model.get("last_errors") or [])
-            or "Yennefer needs a runtime check"
+            or "Jarvis needs a runtime check"
         )
     elif speech.get("speaking"):
         mood = "speaking"
@@ -344,6 +481,7 @@ async def _agent_status_packet(probe: bool = False) -> dict:
     resources = _agent_resource_status()
     permissions = _agent_permission_status()
     speech = _speech_status()
+    capture = _capture_status()
     needs_attention = _agent_needs_attention(voice, playbooks, model)
     hard_needs = {"voice_uninitialized", "voice_degraded", "lmstudio_last_errors"}
     status = "ready"
@@ -353,8 +491,8 @@ async def _agent_status_packet(probe: bool = False) -> dict:
         status = "attention"
     base_url = _backend_base_url()
     return {
-        "agent_id": "yennefer",
-        "name": "Yennefer",
+        "agent_id": "jarvis",
+        "name": "Jarvis",
         "kind": "local_operating_agent",
         "role": "Local Mac presence for voice, chat, safe tools, approval-gated playbooks, and resource checks.",
         "status": status,
@@ -375,6 +513,7 @@ async def _agent_status_packet(probe: bool = False) -> dict:
         "permissions": permissions,
         "playbooks": playbooks,
         "resources": resources,
+        "capture": capture,
         "needs_attention": needs_attention,
     }
 
@@ -439,7 +578,7 @@ def _model_unavailable_reply(exc: Exception) -> str:
         return (
             "No LM Studio endpoint is ready: "
             + "; ".join(endpoint_errors[:3])
-            + ". Command actions still work; run 'repair yennefer services' for the recovery check."
+            + ". Command actions still work; run 'repair jarvis services' for the recovery check."
         )
     if isinstance(exc, httpx.HTTPStatusError):
         status = exc.response.status_code
@@ -650,10 +789,19 @@ def _intent_command(text: str) -> dict | None:
         return {
             "id": "capabilities",
             "name": "Capabilities",
-            "description": "Show what Yennefer can do right now.",
+            "description": "Show what Jarvis can do right now.",
             "trigger": text,
             "tool": "capabilities",
             "args": {},
+        }
+    if q in {"repair jarvis services", "repair yennefer services", "repair assistant services"}:
+        return {
+            "id": "jarvis-doctor",
+            "name": "Jarvis Doctor",
+            "description": "Check and repair backend, overlay, voice, and LM Studio failover.",
+            "trigger": text,
+            "tool": "jarvis_doctor",
+            "args": {"repair": True},
         }
     if url and any(word in q for word in ("read", "fetch", "summarize", "summarise", "look", "open", "page", "website", "url")):
         return {
@@ -719,7 +867,7 @@ def _intent_command(text: str) -> dict | None:
 
 
 def _deterministic_tool_reply(name: str, args: dict, result: str) -> str:
-    if name in {"capabilities", "weather", "web_search", "web_fetch", "observe_browser", "yennefer_doctor"}:
+    if name in {"capabilities", "weather", "web_search", "web_fetch", "observe_browser", "jarvis_doctor"}:
         return result
     return _fallback_vault_summary(args, result) or _fallback_action_summary(name, result)
 
@@ -812,6 +960,41 @@ async def _ask_for_shortcuts(question: str) -> str:
     return _text(await _complete(messages, with_tools=False)) or "I have nothing useful to say yet."
 
 
+async def _question_from_legacy_request(request: Request) -> str:
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        body = await request.json()
+        if isinstance(body, dict):
+            return str(
+                body.get("question")
+                or body.get("message")
+                or body.get("text")
+                or body.get("q")
+                or ""
+            ).strip()
+    return (await request.body()).decode("utf-8", "replace").strip()
+
+
+async def _legacy_query_reply(question: str, speak: bool = True) -> str:
+    question = " ".join((question or "").split())
+    if not question:
+        return "Jarvis is reachable. Pass a question, message, text, or q value."
+    command = _matched_command(question) or _intent_command(question)
+    if command and tools.is_safe(command["tool"]):
+        name = command["tool"]
+        args = command.get("args", {})
+        result = await tools.execute(name, args, CONFIG)
+        reply = _deterministic_tool_reply(name, args, result)
+    else:
+        try:
+            reply = await _ask_for_shortcuts(question)
+        except httpx.HTTPError as exc:
+            reply = _model_unavailable_reply(exc)
+    if speak:
+        _queue_speech(reply)
+    return reply
+
+
 async def _summarise_action(name, args, result, speak, user_message: str | None = None):
     if name == "web_search":
         instruction = (
@@ -889,6 +1072,47 @@ async def reload_chatterbox_voice():
 @app.get("/api/commands")
 async def commands():
     return JSONResponse({"commands": COMMANDS})
+
+
+@app.get("/api/query", response_class=PlainTextResponse)
+@app.get("/query", response_class=PlainTextResponse)
+@app.get("/api/ask", response_class=PlainTextResponse)
+async def legacy_query_get(
+    q: str = "",
+    question: str = "",
+    message: str = "",
+    text: str = "",
+    speak: bool = True,
+):
+    return PlainTextResponse(await _legacy_query_reply(q or question or message or text, speak=speak))
+
+
+@app.post("/api/query", response_class=PlainTextResponse)
+@app.post("/query", response_class=PlainTextResponse)
+@app.post("/api/ask", response_class=PlainTextResponse)
+async def legacy_query_post(request: Request, speak: bool = True):
+    return PlainTextResponse(await _legacy_query_reply(await _question_from_legacy_request(request), speak=speak))
+
+
+@app.post("/api/capture")
+async def capture(body: CaptureIn):
+    item = _store_capture(body.text, source=body.source, context=body.context)
+    reply = _capture_ack(item)
+    if body.speak:
+        _queue_speech(reply)
+    return JSONResponse({
+        "reply": reply,
+        "item": item,
+        "capture": _capture_status(),
+    })
+
+
+@app.get("/api/capture/inbox")
+async def capture_inbox(limit: int = 20):
+    return JSONResponse({
+        "inbox_dir": str(_capture_dir()),
+        "captures": _load_captures(limit=limit),
+    })
 
 
 @app.post("/api/chat")
@@ -986,7 +1210,7 @@ async def chat(body: ChatIn):
 def main():
     import uvicorn
     port = int((CONFIG.get("server", {}) or {}).get("port", 4343))
-    print(f"Yennefer chat box -> http://127.0.0.1:{port}")
+    print(f"Jarvis chat box -> http://127.0.0.1:{port}")
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 
 

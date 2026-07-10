@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local Chatterbox voice server for Yennefer.
+"""Local Chatterbox voice server for Jarvis.
 
 Exposes the small OpenAI-style endpoint that jarvis.voice already expects:
 POST /v1/audio/speech -> WAV bytes.
@@ -29,8 +29,8 @@ from chatterbox.tts import ChatterboxTTS
 
 
 DEFAULT_REFERENCE_AUDIO = Path(
-    "/Users/alsharma/Projects/yennefer/.local/voice-clones/"
-    "Eva_Yennefer_QPYZDsvgGiT4CMQghb53_5cdYOFp2BNBQ8SJjZAUB_20260627T190405Z.mp3"
+    "/Users/alsharma/Projects/jarvis/.local/voice-clones/"
+    "Eva_Jarvis_QPYZDsvgGiT4CMQghb53_5cdYOFp2BNBQ8SJjZAUB_20260627T190405Z.mp3"
 )
 
 
@@ -69,7 +69,7 @@ class ChatterboxService:
         self.model = ChatterboxTTS.from_pretrained(device=device)
         self.device = device
         # Prime the reference conditionals once. Per-request overrides can still
-        # pass a different voice path, but the normal Yennefer path is warm.
+        # pass a different voice path, but the normal Jarvis path is warm.
         self.model.prepare_conditionals(str(self.reference_audio))
 
     def synthesize(self, request: SpeechRequest) -> bytes:
@@ -96,7 +96,7 @@ class ChatterboxService:
 
 
 def create_app(service: ChatterboxService) -> FastAPI:
-    app = FastAPI(title="Yennefer Chatterbox Voice")
+    app = FastAPI(title="Jarvis Chatterbox Voice")
     state: dict[str, Any] = {"ready": False, "error": None}
 
     @app.on_event("startup")
@@ -133,12 +133,12 @@ def create_app(service: ChatterboxService) -> FastAPI:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--host", default=os.environ.get("YENNEFER_CHATTERBOX_HOST", "127.0.0.1"))
-    parser.add_argument("--port", type=int, default=int(os.environ.get("YENNEFER_CHATTERBOX_PORT", "8004")))
-    parser.add_argument("--device", default=os.environ.get("YENNEFER_CHATTERBOX_DEVICE", "auto"))
+    parser.add_argument("--host", default=os.environ.get("JARVIS_CHATTERBOX_HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("JARVIS_CHATTERBOX_PORT", "8004")))
+    parser.add_argument("--device", default=os.environ.get("JARVIS_CHATTERBOX_DEVICE", "auto"))
     parser.add_argument(
         "--reference-audio",
-        default=os.environ.get("YENNEFER_CHATTERBOX_REFERENCE", str(DEFAULT_REFERENCE_AUDIO)),
+        default=os.environ.get("JARVIS_CHATTERBOX_REFERENCE", str(DEFAULT_REFERENCE_AUDIO)),
     )
     args = parser.parse_args()
 

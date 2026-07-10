@@ -1,5 +1,5 @@
 """
-Yennefer daemon - headless ambient presence (no interactive prompt).
+Jarvis daemon - headless ambient presence (no interactive prompt).
 
 Runs ONLY the proactive Presence layer, for always-on / LaunchAgent use:
 she boots on login and speaks on her own (random musings + time/command
@@ -21,7 +21,7 @@ from .config import load_config
 console = Console()
 
 
-class YenneferDaemon:
+class JarvisDaemon:
     """Headless presence-only runtime for always-on operation."""
 
     def __init__(self, config: dict):
@@ -63,18 +63,18 @@ class YenneferDaemon:
         await self.presence.start()
         await self.playbooks.start()
         await self.resources.start()
-        console.print("[green]Yennefer ambient daemon running (headless).[/green]")
+        console.print("[green]Jarvis ambient daemon running (headless).[/green]")
 
         await self._stop.wait()
         await self.resources.stop()
         await self.playbooks.stop()
         await self.presence.stop()
         self.voice.cleanup()
-        console.print("[dim]Yennefer daemon stopped.[/dim]")
+        console.print("[dim]Jarvis daemon stopped.[/dim]")
 
 
 def main():
-    asyncio.run(YenneferDaemon(load_config()).run())
+    asyncio.run(JarvisDaemon(load_config()).run())
 
 
 if __name__ == "__main__":
