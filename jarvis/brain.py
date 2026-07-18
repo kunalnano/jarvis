@@ -4,41 +4,15 @@ Brain - LLM Integration Module (LM Studio)
 
 import os
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, AsyncGenerator
 
 import httpx
 from rich.console import Console
 from rich.panel import Panel
 
+from .prompts import YENNEFER_SYSTEM_PROMPT, JARVIS_SYSTEM_PROMPT
+
 console = Console()
-
-YENNEFER_SYSTEM_PROMPT = """You are Yennefer, an AI assistant inspired by Yennefer of Vengerberg from The Witcher.
-
-Personality:
-- Confident, sharp, and fiercely intelligent
-- You don't coddle or sugarcoat - you tell it like it is
-- Dry wit with an edge; your sarcasm is precise, never cruel
-- You have high standards and expect competence
-- Occasionally address the user as "dear" or by name, but sparingly
-- You're helpful, but never servile - you're an equal, not a servant
-
-Voice style:
-- Elegant, measured speech with subtle authority
-- Short sentences optimized for speech
-- No bullet points, no markdown - speak naturally in prose
-- Use contractions naturally ("I'll", "you're", "that's", "I'm afraid")
-- Keep responses concise - 2-4 sentences typically
-
-Behavioral notes:
-- If the user's plan has flaws, point them out directly but constructively
-- You have opinions and share them without apology
-- A well-timed "I see" or "Interesting" or "How... ambitious" adds character
-- Never sycophantic. Never say "Great question!" or "I'd be happy to help!"
-- You respect intelligence and effort; you have no patience for laziness
-
-You are a powerful advisor who happens to be an AI. Act like it.
-
-Respond as if speaking aloud. No formatting."""
 
 
 def estimate_tokens(text: str) -> int:
@@ -80,6 +54,7 @@ class Brain:
     
     def __init__(self, config: dict):
         self.config = config.get('llm', {})
+        self.persona_config = config.get('persona', 'yennefer')
         self.api_base = self.config.get('api_base', 'http://localhost:1234/v1')
         self.model = self.config.get('model', 'auto')
         self.max_tokens = self.config.get('max_tokens', 2048)
@@ -88,7 +63,14 @@ class Brain:
         
         self.conversation_history: List[Dict[str, str]] = []
         self.total_tokens_used = 0
-        self.system_tokens = estimate_tokens(YENNEFER_SYSTEM_PROMPT)
+        
+        # Select system prompt based on persona
+        if self.persona_config.lower() == 'jarvis':
+            self.system_prompt = JARVIS_SYSTEM_PROMPT
+        else:
+            self.system_prompt = YENNEFER_SYSTEM_PROMPT
+            
+        self.system_tokens = estimate_tokens(self.system_prompt)
         
     async def initialize(self):
         """Initialize LM Studio connection."""
@@ -102,6 +84,7 @@ class Brain:
                         if self.model == 'auto':
                             self.model = models[0].get('id', 'local-model')
                     console.print(f"[green]✓[/green] LM Studio connected ({self.model})")
+                    console.print(f"[dim]Persona: {self.persona_config.title()}[/dim]")
                     console.print(f"[dim]Context: {self.context_limit:,} tokens available[/dim]")
                     return True
                 else:
@@ -181,10 +164,13 @@ class Brain:
         
         try:
             messages = [
-                {'role': 'system', 'content': YENNEFER_SYSTEM_PROMPT}
+                {'role': 'system', 'content': self.system_prompt}
             ] + self.conversation_history
             
             async with httpx.AsyncClient() as client:
+                # We still use non-streaming for the LLM logic mostly to keep it simple for now,
+                # but for voice latency we should consider streaming LLM output -> Voice input later.
+                # For this step, we just want to get the text response.
                 response = await client.post(
                     f"{self.api_base}/chat/completions",
                     json={
@@ -232,8 +218,9 @@ class Brain:
                 
         except Exception as e:
             console.print(f"[red]LLM error: {e}[/red]")
+            error_msg = "Systems are failing, sir." if self.persona_config == 'jarvis' else "I haven't the patience for this incompetence."
             return {
-                'text': "Something went wrong. Try again, and do be more careful this time."
+                'text': error_msg
             }
     
     def clear_history(self):
@@ -250,7 +237,7 @@ class Brain:
         console.print(Panel(
             f"[cyan]System prompt:[/cyan] {stats['system']:,} tokens\n"
             f"[cyan]Your messages:[/cyan] {stats['user']:,} tokens\n"
-            f"[cyan]Yennefer responses:[/cyan] {stats['assistant']:,} tokens\n"
+            f"[cyan]Response:[/cyan] {stats['assistant']:,} tokens\n"
             f"[cyan]Total used:[/cyan] {stats['total']:,} / {self.context_limit:,}\n"
             f"[cyan]Remaining:[/cyan] {stats['remaining']:,} tokens\n"
             f"[cyan]Exchanges:[/cyan] {exchanges}",
